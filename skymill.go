@@ -157,7 +157,7 @@ func (s *Stream) PublishOnce(ctx context.Context, idempotencyKey string, msg *me
 	uuid, _ := values[redisstream.UUIDHeaderKey].(string)
 	metadata, _ := values["metadata"].([]byte)
 	payload, _ := values["payload"].([]byte)
-	idempotencyRedisKey := "skymill:idempotency:" + s.binding.Stream + ":" + idempotencyKey
+	idempotencyRedisKey := s.binding.idempotencyKey(idempotencyKey)
 	const script = `
 		local existing = redis.call('GET', KEYS[1])
 		if existing then return {existing, '1'} end
