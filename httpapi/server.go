@@ -117,7 +117,13 @@ func (s *Server) finish(w http.ResponseWriter, r *http.Request, ack bool) {
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Token == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
 	s.mu.Lock(); msg := s.pending[req.Token]; if msg != nil { delete(s.pending, req.Token) }; s.mu.Unlock()
 	if msg == nil { http.Error(w, "unknown delivery token", http.StatusNotFound); return }
-	if ack { msg.Ack() } else { msg.Nack() }
+	if ack {
+		msg.Ack()
+		s.Stream.EmitCompletionHint(r.Context(), skymill.HintAcked, msg.UUID, "")
+	} else {
+		msg.Nack()
+		s.Stream.EmitCompletionHint(r.Context(), skymill.HintNacked, msg.UUID, "")
+	}
 	writeJSON(w, map[string]any{"ok": true})
 }
 
