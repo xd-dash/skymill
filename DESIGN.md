@@ -40,3 +40,31 @@ This document records correctness boundaries that should be preserved across pro
 19. Redis persistence/replication policy is part of the durability contract and must be visible in Fatline placement.
 20. Backlog, pending count/age, reclaim count, ACK/NACK rate, hint failures, and reconciliation lag should be observable.
 21. Poison messages need an explicit bounded retry/dead-letter policy; infinite NACK loops are not an acceptable default.
+
+
+## Hardened generic contract
+
+The generic contract now has five explicit planes:
+
+```text
+authority   Binding + Authorizer / HTTP Grant
+delivery    Watermill Redis Stream + source PublishOnce
+workflow    durable Correlation + Settle
+policy      RetentionPolicy + RetryPolicy + WorkflowPolicy
+signals     HintPublisher (Logma adapter)
+operations  Metrics + Pending()
+```
+
+A source application should not create its own delivery queue, retry lease, workflow token store, or stream-selection authorization. Source-specific state such as GitHub App installations and GitHub delivery reconciliation remains outside Skymill.
+
+### Retry/dead letter
+
+Bounded retry is configured with `RetryPolicy.MaxDeliveries` and a distinct `DeadLetterStream`. `PrepareDelivery` is the generic pre-dispatch gate. When the limit is exceeded it idempotently appends the message to the DLQ and tells the consumer to ACK the source message. DLQ publication must succeed before the source can be ACKed.
+
+### Workflow settlement
+
+`Correlate` durably records a long-running workflow identity before the short-lived delivery worker is released. `Settle` is an idempotent pending-to-terminal transition and emits only a best-effort `stream.workflow.settled` hint afterward. Application-specific result state remains authoritative for whether a workflow should be settled.
+
+### Metrics
+
+The exporter-neutral `Metrics` interface currently records publish acceptance/duplicates, ACK/NACK, dead-letter transitions, workflow correlation, and workflow settlement. `Pending()` exposes consumer-group pending count/range/consumer count for reconciliation and scraping.
