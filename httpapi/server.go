@@ -42,7 +42,9 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) authorize(r *http.Request) (context.Context, error) {
 	if s.Authenticate == nil { return r.Context(), nil }
-	return s.Authenticate(r)
+	ctx, err := s.Authenticate(r)
+	if err != nil { return nil, err }
+	return ctx, nil
 }
 
 func (s *Server) ensureSubscriber(ctx context.Context) error {
@@ -53,6 +55,8 @@ func (s *Server) ensureSubscriber(ctx context.Context) error {
 func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
 	ctx, err := s.authorize(r)
 	if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	r = r.WithContext(ctx)
+	if err := requireGrant(r, Publish, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
 	var req struct {
 		IdempotencyKey string            `json:"idempotency_key"`
 		MessageID      string            `json:"message_id"`
@@ -77,6 +81,8 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
 func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 	ctx, err := s.authorize(r)
 	if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	r = r.WithContext(ctx)
+	if err := requireGrant(r, Consume, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
 	var req struct { Limit int `json:"limit"` }
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	if req.Limit <= 0 { req.Limit = 25 }
@@ -112,16 +118,21 @@ func (s *Server) ack(w http.ResponseWriter, r *http.Request) { s.finish(w, r, tr
 func (s *Server) nack(w http.ResponseWriter, r *http.Request) { s.finish(w, r, false) }
 
 func (s *Server) finish(w http.ResponseWriter, r *http.Request, ack bool) {
-	if _, err := s.authorize(r); err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	ctx, err := s.authorize(r)
+	if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	r = r.WithContext(ctx)
+	if err := requireGrant(r, Consume, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
 	var req struct { Token string `json:"token"` }
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Token == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
 	s.mu.Lock(); msg := s.pending[req.Token]; if msg != nil { delete(s.pending, req.Token) }; s.mu.Unlock()
 	if msg == nil { http.Error(w, "unknown delivery token", http.StatusNotFound); return }
 	if ack {
 		msg.Ack()
+		s.Stream.ObserveAck(r.Context(), true)
 		s.Stream.EmitCompletionHint(r.Context(), skymill.HintAcked, msg.UUID, "")
 	} else {
 		msg.Nack()
+		s.Stream.ObserveAck(r.Context(), false)
 		s.Stream.EmitCompletionHint(r.Context(), skymill.HintNacked, msg.UUID, "")
 	}
 	writeJSON(w, map[string]any{"ok": true})
