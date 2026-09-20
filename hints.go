@@ -30,6 +30,7 @@ const (
 	HintAcked    = "stream.acked"
 	HintNacked   = "stream.nacked"
 	HintWorkflowSettled = "stream.workflow.settled"
+	HintDeadLettered = "stream.dead_lettered"
 )
 
 func (s *Stream) emitHint(ctx context.Context, hint Hint) {
