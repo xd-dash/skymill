@@ -62,3 +62,21 @@ For long-running qualification, a consumer may durably correlate the stream deli
 ## Provider direction
 
 The public application boundary should remain Watermill-compatible. Redis Streams is the first provider, not a permanent requirement of application code. Future Skymill providers can use the same Watermill Publisher/Subscriber model while Fatline binds only providers whose capabilities satisfy the requested durable-stream class.
+
+
+## Service boundary
+
+`httpapi.Server` exposes Skymill to non-Go runtimes while keeping Watermill and Redis credentials inside the Fatline-hosted service:
+
+```text
+POST /v1/messages
+POST /v1/deliveries/receive
+POST /v1/deliveries/ack
+POST /v1/deliveries/nack
+```
+
+The server accepts an optional `Authenticator`, so a Fatline deployment can authenticate service/capability credentials before Skymill invokes its binding authorization. Redis credentials never need to be given to Probot.
+
+Durable source ingress uses `Stream.PublishOnce`. It atomically checks an idempotency key and appends the Watermill-compatible Redis Stream entry in one Redis Lua operation. The resulting Redis Stream entry ID is stored against that idempotency key. Retrying the same source delivery therefore returns the original entry rather than appending another message.
+
+For GitHub, the idempotency key and Watermill message UUID are both the GitHub delivery GUID. This closes the failure window that would exist if Probot independently wrote a GUID hash and then called a remote stream publisher.
