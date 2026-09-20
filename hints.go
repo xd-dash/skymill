@@ -44,3 +44,12 @@ func (s *Stream) emitHint(ctx context.Context, hint Hint) {
 	// already transitioned) before this is called.
 	_ = s.hints.PublishHint(ctx, hint)
 }
+
+func (s *Stream) EmitCompletionHint(ctx context.Context, kind, messageID, detail string) {
+	if kind != HintAcked && kind != HintNacked {
+		return
+	}
+	s.emitHint(ctx, Hint{
+		Kind: kind, MessageID: messageID, ConsumerGroup: s.group, Error: detail,
+	})
+}
