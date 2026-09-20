@@ -29,6 +29,7 @@ const (
 	HintActivity = "stream.activity"
 	HintAcked    = "stream.acked"
 	HintNacked   = "stream.nacked"
+	HintWorkflowSettled = "stream.workflow.settled"
 )
 
 func (s *Stream) emitHint(ctx context.Context, hint Hint) {
