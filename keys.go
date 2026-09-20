@@ -11,3 +11,8 @@ func (b Binding) idempotencyKey(id string) string {
 	sum := sha256.Sum256([]byte(b.Org + "\x00" + b.Tenant + "\x00" + b.Application + "\x00" + b.Stream + "\x00" + id))
 	return "skymill:idempotency:" + hex.EncodeToString(sum[:])
 }
+
+func (b Binding) correlationKey(id string) string {
+	sum := sha256.Sum256([]byte(b.Org + "\x00" + b.Tenant + "\x00" + b.Application + "\x00" + b.Stream + "\x00correlation\x00" + id))
+	return "skymill:correlation:" + hex.EncodeToString(sum[:])
+}
