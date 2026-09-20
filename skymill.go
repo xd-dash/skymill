@@ -25,6 +25,7 @@ type Binding struct {
 type Authorizer interface {
 	AuthorizePublish(context.Context, Binding) error
 	AuthorizeConsume(context.Context, Binding, string) error
+	AuthorizeSettle(context.Context, Binding, string) error
 }
 
 type Config struct {
@@ -48,6 +49,8 @@ type Config struct {
 
 	Authorizer Authorizer
 	Hints      HintPublisher
+	Metrics    Metrics
+	Policy     Policy
 	Logger     watermill.LoggerAdapter
 }
 
@@ -56,6 +59,8 @@ type Stream struct {
 	group      string
 	authorizer Authorizer
 	hints      HintPublisher
+	metrics    Metrics
+	policy     Policy
 	client     redis.UniversalClient
 	marshaller redisstream.Marshaller
 	publisher  *redisstream.Publisher
@@ -65,6 +70,9 @@ type Stream struct {
 func New(config Config) (*Stream, error) {
 	if config.Client == nil {
 		return nil, errors.New("skymill: redis client is required")
+	}
+	if err := config.Policy.validate(config.Binding); err != nil {
+		return nil, err
 	}
 	if config.Binding.Stream == "" {
 		return nil, errors.New("skymill: stream name is required")
@@ -76,9 +84,9 @@ func New(config Config) (*Stream, error) {
 	}
 
 	maxlens := map[string]int64{}
-	if config.MaxLen > 0 {
-		maxlens[config.Binding.Stream] = config.MaxLen
-	}
+	maxLen := config.MaxLen
+	if config.Policy.Retention.MaxLen > 0 { maxLen = config.Policy.Retention.MaxLen }
+	if maxLen > 0 { maxlens[config.Binding.Stream] = maxLen }
 	marshaller := redisstream.DefaultMarshallerUnmarshaller{}
 	pub, err := redisstream.NewPublisher(redisstream.PublisherConfig{
 		Client: config.Client, Marshaller: marshaller, Maxlens: maxlens,
@@ -106,7 +114,7 @@ func New(config Config) (*Stream, error) {
 
 	return &Stream{
 		binding: config.Binding, group: config.ConsumerGroup,
-		authorizer: config.Authorizer, hints: config.Hints, client: config.Client, marshaller: marshaller,
+		authorizer: config.Authorizer, hints: config.Hints, metrics: config.Metrics, policy: config.Policy, client: config.Client, marshaller: marshaller,
 		publisher: pub, subscriber: sub,
 	}, nil
 }
@@ -165,10 +173,14 @@ func (s *Stream) PublishOnce(ctx context.Context, idempotencyKey string, msg *me
 			'_watermill_message_uuid', ARGV[1],
 			'metadata', ARGV[2],
 			'payload', ARGV[3])
-		redis.call('SET', KEYS[1], id)
+		if tonumber(ARGV[4]) > 0 then
+			redis.call('SET', KEYS[1], id, 'PX', ARGV[4])
+		else
+			redis.call('SET', KEYS[1], id)
+		end
 		return {id, '0'}
 	`
-	result, err := s.client.Eval(ctx, script, []string{idempotencyRedisKey, s.binding.Stream}, uuid, metadata, payload).Slice()
+	result, err := s.client.Eval(ctx, script, []string{idempotencyRedisKey, s.binding.Stream}, uuid, metadata, payload, s.policy.Retention.IdempotencyTTL.Milliseconds()).Slice()
 	if err != nil {
 		return PublishResult{}, err
 	}
@@ -177,6 +189,7 @@ func (s *Stream) PublishOnce(ctx context.Context, idempotencyKey string, msg *me
 	}
 	entryID, _ := result[0].(string)
 	duplicate, _ := result[1].(string)
+	s.metric(ctx, "publish.accepted", 1, map[string]string{"duplicate": duplicate})
 	pubResult := PublishResult{StreamEntryID: entryID, Duplicate: duplicate == "1"}
 	s.emitHint(ctx, Hint{
 		Kind: HintActivity, MessageID: msg.UUID, StreamEntryID: entryID, Duplicate: pubResult.Duplicate,
