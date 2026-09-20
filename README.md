@@ -80,3 +80,16 @@ The server accepts an optional `Authenticator`, so a Fatline deployment can auth
 Durable source ingress uses `Stream.PublishOnce`. It atomically checks an idempotency key and appends the Watermill-compatible Redis Stream entry in one Redis Lua operation. The resulting Redis Stream entry ID is stored against that idempotency key. Retrying the same source delivery therefore returns the original entry rather than appending another message.
 
 For GitHub, the idempotency key and Watermill message UUID are both the GitHub delivery GUID. This closes the failure window that would exist if Probot independently wrote a GUID hash and then called a remote stream publisher.
+
+
+## Logma hints
+
+Skymill accepts an optional `HintPublisher`. A Logma adapter implements this narrow boundary and may publish:
+
+- `stream.activity` after `PublishOnce` has durably appended (or identified the existing append).
+- `stream.acked` after ACK.
+- `stream.nacked` after NACK.
+
+Hint publication is deliberately best-effort and occurs after the authoritative transition. A Logma outage therefore cannot turn a successful stream operation into a failure or create a false durable acceptance. Lifecycle, metrics, and callback consumers may use hints to wake immediately, then inspect durable truth.
+
+See `DESIGN.md` for the cross-provider correctness invariants, retention rules, long-running-work rules, and operational requirements.
