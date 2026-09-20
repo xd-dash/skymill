@@ -54,6 +54,8 @@ type Stream struct {
 	binding    Binding
 	group      string
 	authorizer Authorizer
+	client     redis.UniversalClient
+	marshaller redisstream.Marshaller
 	publisher  *redisstream.Publisher
 	subscriber *redisstream.Subscriber
 }
@@ -75,9 +77,9 @@ func New(config Config) (*Stream, error) {
 	if config.MaxLen > 0 {
 		maxlens[config.Binding.Stream] = config.MaxLen
 	}
+	marshaller := redisstream.DefaultMarshallerUnmarshaller{}
 	pub, err := redisstream.NewPublisher(redisstream.PublisherConfig{
-		Client:  config.Client,
-		Maxlens: maxlens,
+		Client: config.Client, Marshaller: marshaller, Maxlens: maxlens,
 	}, logger)
 	if err != nil {
 		return nil, err
@@ -102,7 +104,8 @@ func New(config Config) (*Stream, error) {
 
 	return &Stream{
 		binding: config.Binding, group: config.ConsumerGroup,
-		authorizer: config.Authorizer, publisher: pub, subscriber: sub,
+		authorizer: config.Authorizer, client: config.Client, marshaller: marshaller,
+		publisher: pub, subscriber: sub,
 	}, nil
 }
 
@@ -122,6 +125,57 @@ func (s *Stream) Publish(ctx context.Context, messages ...*message.Message) erro
 		msg.SetContext(ctx)
 	}
 	return s.publisher.Publish(s.binding.Stream, messages...)
+}
+
+
+type PublishResult struct {
+	StreamEntryID string
+	Duplicate     bool
+}
+
+// PublishOnce atomically couples a caller-supplied idempotency key to XADD.
+// It is the durable ingress primitive for sources such as GitHub whose
+// delivery identity must survive ambiguous HTTP retries.
+func (s *Stream) PublishOnce(ctx context.Context, idempotencyKey string, msg *message.Message) (PublishResult, error) {
+	if idempotencyKey == "" {
+		return PublishResult{}, errors.New("skymill: idempotency key is required")
+	}
+	if msg == nil {
+		return PublishResult{}, errors.New("skymill: nil message")
+	}
+	if s.authorizer != nil {
+		if err := s.authorizer.AuthorizePublish(ctx, s.binding); err != nil {
+			return PublishResult{}, err
+		}
+	}
+	values, err := s.marshaller.Marshal(s.binding.Stream, msg)
+	if err != nil {
+		return PublishResult{}, err
+	}
+	uuid, _ := values[redisstream.UUIDHeaderKey].(string)
+	metadata, _ := values["metadata"].([]byte)
+	payload, _ := values["payload"].([]byte)
+	idempotencyRedisKey := "skymill:idempotency:" + s.binding.Stream + ":" + idempotencyKey
+	const script = `
+		local existing = redis.call('GET', KEYS[1])
+		if existing then return {existing, '1'} end
+		local id = redis.call('XADD', KEYS[2], '*',
+			'_watermill_message_uuid', ARGV[1],
+			'metadata', ARGV[2],
+			'payload', ARGV[3])
+		redis.call('SET', KEYS[1], id)
+		return {id, '0'}
+	`
+	result, err := s.client.Eval(ctx, script, []string{idempotencyRedisKey, s.binding.Stream}, uuid, metadata, payload).Slice()
+	if err != nil {
+		return PublishResult{}, err
+	}
+	if len(result) != 2 {
+		return PublishResult{}, errors.New("skymill: invalid publish-once result")
+	}
+	entryID, _ := result[0].(string)
+	duplicate, _ := result[1].(string)
+	return PublishResult{StreamEntryID: entryID, Duplicate: duplicate == "1"}, nil
 }
 
 func (s *Stream) Subscribe(ctx context.Context) (<-chan *message.Message, error) {
