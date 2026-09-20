@@ -197,6 +197,9 @@ func (s *Stream) PublishOnce(ctx context.Context, idempotencyKey string, msg *me
 	return pubResult, nil
 }
 
+func (s *Stream) Binding() Binding { return s.binding }
+func (s *Stream) ConsumerGroup() string { return s.group }
+
 func (s *Stream) Subscribe(ctx context.Context) (<-chan *message.Message, error) {
 	if s.authorizer != nil {
 		if err := s.authorizer.AuthorizeConsume(ctx, s.binding, s.group); err != nil {
