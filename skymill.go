@@ -47,6 +47,7 @@ type Config struct {
 	ConsumerTimeout time.Duration
 
 	Authorizer Authorizer
+	Hints      HintPublisher
 	Logger     watermill.LoggerAdapter
 }
 
@@ -54,6 +55,7 @@ type Stream struct {
 	binding    Binding
 	group      string
 	authorizer Authorizer
+	hints      HintPublisher
 	client     redis.UniversalClient
 	marshaller redisstream.Marshaller
 	publisher  *redisstream.Publisher
@@ -104,7 +106,7 @@ func New(config Config) (*Stream, error) {
 
 	return &Stream{
 		binding: config.Binding, group: config.ConsumerGroup,
-		authorizer: config.Authorizer, client: config.Client, marshaller: marshaller,
+		authorizer: config.Authorizer, hints: config.Hints, client: config.Client, marshaller: marshaller,
 		publisher: pub, subscriber: sub,
 	}, nil
 }
@@ -175,7 +177,11 @@ func (s *Stream) PublishOnce(ctx context.Context, idempotencyKey string, msg *me
 	}
 	entryID, _ := result[0].(string)
 	duplicate, _ := result[1].(string)
-	return PublishResult{StreamEntryID: entryID, Duplicate: duplicate == "1"}, nil
+	pubResult := PublishResult{StreamEntryID: entryID, Duplicate: duplicate == "1"}
+	s.emitHint(ctx, Hint{
+		Kind: HintActivity, MessageID: msg.UUID, StreamEntryID: entryID, Duplicate: pubResult.Duplicate,
+	})
+	return pubResult, nil
 }
 
 func (s *Stream) Subscribe(ctx context.Context) (<-chan *message.Message, error) {
