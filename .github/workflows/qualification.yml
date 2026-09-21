@@ -30,9 +30,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Verify module graph is committed
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
+      - name: Resolve module graph
+        run: go mod tidy
       - name: Test generic and Redis durability contracts
         run: go test ./...
+      - name: Require committed module graph
+        run: git diff --exit-code -- go.mod go.sum
