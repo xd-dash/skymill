@@ -82,3 +82,12 @@ Retry authority is now Redis' PEL delivery count (`XPENDING`), not mutable Water
 Long-running workflow settlement no longer requires a process-local HTTP delivery token. Correlation records carry the stream entry ID and consumer group; `SettleAndAck` atomically transitions the workflow correlation to a terminal state and `XACK`s the PEL entry. It is safe to retry after an ambiguous HTTP response.
 
 `Status()` is the generic Fatline lifecycle/reconciliation surface: stream length, pending range/count, consumer count, and oldest pending idle age. The HTTP service exposes status and workflow correlation/settlement without exposing Redis credentials or accepting caller-selected bindings.
+
+
+## Stable authorization and delivery vocabulary
+
+Skymill now has one authorization vocabulary across its Go and HTTP boundaries: `ActionPublish`, `ActionConsume`, `ActionSettle`, and `ActionInspect`. `Authorizer.Authorize(ctx, AuthorizationRequest)` receives the immutable Binding and consumer group. HTTP grants reuse the same actions rather than maintaining a parallel operation enum. This is the intended Fatline compiled-ACL adapter point.
+
+`Delivery` is the provider-neutral envelope for durable consumer identity. Its `ProviderDeliveryID` is opaque outside the provider adapter. Redis Streams maps it to the XID; future providers may map their own durable delivery identity without changing application contracts. Retry policy consumes this envelope/state rather than Redis-specific IDs in application APIs.
+
+The remaining Redis-specific code is therefore an adapter concern: PEL inspection, XACK, XADD, and stream/group status. Those details should not migrate into Probot or other applications.
