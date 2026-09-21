@@ -22,7 +22,7 @@ func integrationRedis(t *testing.T) *redis.Client {
 
 func integrationProvider(t *testing.T,c *redis.Client,consumer string)*redisStreamProvider{
 	t.Helper()
-	p,err:=newRedisStreamProvider(RedisStreamProviderConfig{Client:c,Binding:Binding{Org:"o",Tenant:"t",Application:"a",Stream:"work"},ConsumerGroup:"workers",Consumer:consumer,MaxIdleTime:time.Millisecond})
+	p,err:=newRedisStreamProvider(RedisStreamProviderConfig{Client:c,Binding:Binding{Org:"o",Tenant:"t",Application:"a",Stream:"work"},ConsumerGroup:"workers",Consumer:consumer,MaxIdleTime:time.Millisecond,ClaimInterval:5*time.Millisecond,BlockTime:5*time.Millisecond})
 	if err!=nil{t.Fatal(err)}
 	return p
 }
@@ -76,4 +76,22 @@ func TestRedisSettleAndAckIsRepeatableAfterConsumerDisappears(t *testing.T){
 	got,changed,acked,err=p.SettleAndAck(ctx,p.binding,"workflow-1",WorkflowSucceeded,"result://1","")
 	if err!=nil{t.Fatal(err)};if changed||acked||got.State!=WorkflowSucceeded{t.Fatalf("repeat got=%#v changed=%v acked=%v",got,changed,acked)}
 	if pnd:=c.XPending(ctx,"work","workers").Val();pnd!=nil&&pnd.Count!=0{t.Fatalf("pending=%d",pnd.Count)}
+}
+
+
+func TestRedisSubscriptionCarriesIdentityAcrossCrashReclaim(t *testing.T){
+	ctx:=context.Background();c:=integrationRedis(t)
+	p1:=integrationProvider(t,c,"c1")
+	subctx,cancel:=context.WithCancel(ctx)
+	ch,err:=p1.Subscribe(subctx);if err!=nil{t.Fatal(err)}
+	pub,err:=p1.PublishOnce(ctx,"crash-source",message.NewMessage("crash-message",[]byte("payload")),RetentionPolicy{});if err!=nil{t.Fatal(err)}
+	var first Delivery
+	select{case first=<-ch:case<-time.After(time.Second):t.Fatal("first delivery timeout")}
+	if first.ProviderDeliveryID!=pub.ProviderDeliveryID||first.Message==nil||first.Message.UUID!="crash-message"{t.Fatalf("first=%#v pub=%#v",first,pub)}
+	cancel()
+	p2:=integrationProvider(t,c,"c2")
+	ch2,err:=p2.Subscribe(ctx);if err!=nil{t.Fatal(err)}
+	var reclaimed Delivery
+	select{case reclaimed=<-ch2:case<-time.After(2*time.Second):t.Fatal("reclaim timeout")}
+	if reclaimed.ProviderDeliveryID!=first.ProviderDeliveryID||reclaimed.Consumer!="c2"||reclaimed.Attempt<=first.Attempt{t.Fatalf("first=%#v reclaimed=%#v",first,reclaimed)}
 }
