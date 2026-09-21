@@ -148,3 +148,22 @@ The Redis integration qualification now covers duplicate publish-once, durable P
 Redis provider keys are derived from the authority Binding and share one Redis Cluster hash tag. The physical source stream, idempotency keys, workflow correlations, and DLQ streams for a binding therefore occupy the same hash slot. This is required because publish-once and settle-and-ACK use multi-key Lua operations; using the caller's logical stream name directly would work on standalone Redis but fail with CROSSSLOT on Redis Cluster.
 
 `Binding.Stream` is consequently a logical Skymill stream name. Redis physical key layout is an adapter detail and must not leak into applications or Fatline ACL rules.
+
+
+## Contract freeze
+
+The Skymill durable-provider contract is frozen at qualification commit `88b8b9ce3f2d9031cb7fa7f9771b9d4d3c0dbac8` (qualification run 35556700862).
+
+The frozen application-facing vocabulary is:
+- immutable `Binding` plus action-based `AuthorizationRequest`;
+- provider-neutral `Delivery` with opaque `ProviderDeliveryID`;
+- `DurableProvider` as the internal durability boundary;
+- durable correlation state behind that provider boundary;
+- provider-atomic `SettleAndAck`;
+- durable retry attempts derived from provider state;
+- explicit operational versus replay-safe retention modes;
+- Logma hints as best-effort observations, never correctness authority.
+
+Changes to these semantics require a deliberate contract revision and renewed provider qualification. Provider implementations, operational tuning, additional metrics, and application adapters may evolve without expanding this vocabulary.
+
+Qualification at the frozen commit passed from a clean checkout with Redis: module resolution, generic contract tests, Redis durability/crash-reclaim tests, and the committed module-graph reproducibility gate.
