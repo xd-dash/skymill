@@ -13,7 +13,7 @@ import (
 type DurableProvider interface {
 	Publish(context.Context, ...*message.Message) error
 	PublishOnce(context.Context, string, *message.Message, RetentionPolicy) (PublishResult, error)
-	Subscribe(context.Context) (<-chan *message.Message, error)
+	Subscribe(context.Context) (<-chan Delivery, error)
 
 	DeliveryState(context.Context, string) (Delivery, error)
 	DeadLetter(context.Context, Delivery, *message.Message, string) error
