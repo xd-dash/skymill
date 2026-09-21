@@ -30,9 +30,7 @@ func (s *Stream) Correlate(ctx context.Context, c Correlation) error {
 	if c.ID == "" || c.MessageID == "" {
 		return errors.New("skymill: correlation id and message id are required")
 	}
-	if s.authorizer != nil {
-		if err := s.authorizer.AuthorizeSettle(ctx, s.binding, s.group); err != nil { return err }
-	}
+	if err := s.authorize(ctx, ActionSettle); err != nil { return err }
 	now := time.Now().UTC()
 	key := s.binding.correlationKey(c.ID)
 	fields := map[string]any{
@@ -66,9 +64,7 @@ func (s *Stream) Settle(ctx context.Context, id string, state WorkflowState, res
 	if state != WorkflowSucceeded && state != WorkflowFailed {
 		return Correlation{}, errors.New("skymill: settlement must be succeeded or failed")
 	}
-	if s.authorizer != nil {
-		if err := s.authorizer.AuthorizeSettle(ctx, s.binding, s.group); err != nil { return Correlation{}, err }
-	}
+	if err := s.authorize(ctx, ActionSettle); err != nil { return Correlation{}, err }
 	key := s.binding.correlationKey(id)
 	now := time.Now().UTC()
 	const script = `
