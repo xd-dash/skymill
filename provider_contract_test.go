@@ -20,14 +20,16 @@ type fakeProvider struct {
 
 func(f *fakeProvider)Publish(context.Context,...*message.Message)error{return nil}
 func(f *fakeProvider)PublishOnce(context.Context,string,*message.Message,RetentionPolicy)(PublishResult,error){return PublishResult{ProviderDeliveryID:"p1"},nil}
-func(f *fakeProvider)Subscribe(context.Context)(<-chan *message.Message,error){return make(chan *message.Message),nil}
+func(f *fakeProvider)Subscribe(context.Context)(<-chan Delivery,error){return make(chan Delivery),nil}
 func(f *fakeProvider)DeliveryState(context.Context,string)(Delivery,error){return f.delivery,nil}
 func(f *fakeProvider)DeadLetter(context.Context,Delivery,*message.Message,string)error{return f.deadLetterErr}
 func(f *fakeProvider)Ack(context.Context,string,string)(bool,error){f.acked=true;return true,nil}
+func(f *fakeProvider)Nack(context.Context,Delivery)error{return nil}
 func(f *fakeProvider)Status(context.Context)(ProviderStatus,error){return f.status,nil}
 func(f *fakeProvider)CreateCorrelation(_ context.Context,_ Binding,c Correlation,_ WorkflowPolicy)(bool,error){if f.correlation.ID!=""{return false,nil};c.State=WorkflowPending;c.CreatedAt=time.Now();f.correlation=c;return true,nil}
 func(f *fakeProvider)GetCorrelation(context.Context,Binding,string)(Correlation,error){return f.correlation,nil}
 func(f *fakeProvider)SettleCorrelation(_ context.Context,_ Binding,_ string,state WorkflowState,result,detail string)(bool,error){if f.correlation.ID==""{return false,errors.New("unknown")};if f.correlation.State!=WorkflowPending{return false,nil};f.correlation.State=state;f.correlation.ResultRef=result;f.correlation.Error=detail;f.settled=true;return true,nil}
+func(f *fakeProvider)SettleAndAck(_ context.Context,_ Binding,_ string,state WorkflowState,result,detail string)(Correlation,bool,bool,error){changed:=false;if f.correlation.ID==""{return Correlation{},false,false,errors.New("unknown")};if f.correlation.State==WorkflowPending{f.correlation.State=state;f.correlation.ResultRef=result;f.correlation.Error=detail;f.settled=true;changed=true};f.acked=true;return f.correlation,changed,true,nil}
 func(f *fakeProvider)Close()error{return nil}
 
 func TestPrepareDeliveryUsesProviderAttemptAndDLQFailureDoesNotAck(t *testing.T){
