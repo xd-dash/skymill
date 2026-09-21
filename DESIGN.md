@@ -91,3 +91,22 @@ Skymill now has one authorization vocabulary across its Go and HTTP boundaries: 
 `Delivery` is the provider-neutral envelope for durable consumer identity. Its `ProviderDeliveryID` is opaque outside the provider adapter. Redis Streams maps it to the XID; future providers may map their own durable delivery identity without changing application contracts. Retry policy consumes this envelope/state rather than Redis-specific IDs in application APIs.
 
 The remaining Redis-specific code is therefore an adapter concern: PEL inspection, XACK, XADD, and stream/group status. Those details should not migrate into Probot or other applications.
+
+
+## Durable provider boundary
+
+`Stream` no longer owns Redis PEL/XACK/XADD/XLEN/XPENDING mechanics. Those are behind one coherent internal `DurableProvider` boundary:
+
+```text
+Publish / PublishOnce / Subscribe
+DeliveryState
+DeadLetter
+Ack
+Status
+Create/Get/SettleCorrelation
+Close
+```
+
+The Redis Streams adapter is the first implementation and may use Watermill plus go-redis internally. Skymill's policy, authorization, workflow composition, metrics, and Logma hints operate only on provider-neutral `Delivery`, `ProviderStatus`, `PublishResult`, and `Correlation` values.
+
+This boundary is intentionally coarse. New providers should implement the durability semantics as a unit rather than growing one provider-specific interface method whenever an application discovers another Redis command it needs. Application code must not depend on Redis stream IDs; `ProviderDeliveryID` is opaque.
