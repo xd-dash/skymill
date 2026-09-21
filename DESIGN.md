@@ -119,3 +119,14 @@ The generic Stream layer no longer owns Redis transport mechanics. DurableProvid
 Application-visible delivery identity is ProviderDeliveryID. Redis XIDs are one adapter representation, not part of the Skymill contract.
 
 Contract tests use a fake DurableProvider to exercise bounded-retry/DLQ failure, settlement after the original worker is gone, repeated terminal settlement with ACK retry, and provider-neutral status. Provider-specific integration tests should separately exercise Redis crash/reclaim behavior.
+
+
+## Durable provider boundary
+
+The generic Stream layer no longer owns Redis PEL/XACK/XADD/XLEN/XPENDING mechanics. `DurableProvider` is the single internal boundary for durable transport operations: publish, publish-once, subscribe, delivery state, dead-letter, ACK, status, correlation persistence, and atomic settle+ACK.
+
+The Redis Streams adapter implements that contract with Watermill and go-redis. Provider delivery identity remains opaque to Stream and applications.
+
+Atomicity is intentionally part of the provider contract: `SettleAndAck` must make workflow terminal state and transport acknowledgement one retry-safe provider operation. For Redis Streams this is one Lua operation over the correlation hash and XACK, avoiding the earlier failure window between terminal settlement and ACK.
+
+Tests at the generic layer use a fake DurableProvider and verify durable-attempt policy, DLQ failure behavior, and settlement delegation without importing Redis. Provider-specific crash/reclaim integration tests belong with the Redis adapter.
