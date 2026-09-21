@@ -2,6 +2,7 @@ package skymill
 
 import (
 	"context"
+	"time"
 
 	"github.com/ThreeDotsLabs/watermill/message"
 )
