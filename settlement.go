@@ -22,9 +22,7 @@ func (s *Stream) SettleAndAck(ctx context.Context, id string, state WorkflowStat
 	if state != WorkflowSucceeded && state != WorkflowFailed {
 		return SettlementResult{}, errors.New("skymill: settlement must be succeeded or failed")
 	}
-	if s.authorizer != nil {
-		if err := s.authorizer.AuthorizeSettle(ctx, s.binding, s.group); err != nil { return SettlementResult{}, err }
-	}
+	if err := s.authorize(ctx, ActionSettle); err != nil { return SettlementResult{}, err }
 	c, err := s.GetCorrelation(ctx, id)
 	if err != nil { return SettlementResult{}, err }
 	if c.ID == "" { return SettlementResult{}, errors.New("skymill: unknown correlation") }
