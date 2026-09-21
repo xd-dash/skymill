@@ -5,14 +5,25 @@ import (
 	"encoding/hex"
 )
 
+func (b Binding) redisSlotTag() string {
+	sum := sha256.Sum256([]byte(b.Org + "\x00" + b.Tenant + "\x00" + b.Application + "\x00" + b.Stream))
+	return hex.EncodeToString(sum[:16])
+}
+
+func (b Binding) redisStreamKey() string {
+	return "skymill:{" + b.redisSlotTag() + "}:stream:" + b.Stream
+}
+
+func (b Binding) redisAuxStreamKey(name string) string {
+	return "skymill:{" + b.redisSlotTag() + "}:stream:" + name
+}
+
 func (b Binding) idempotencyKey(id string) string {
-	// Hash caller-controlled identity so Redis key syntax, size, and accidental
-	// cross-scope collisions are independent of source identifiers.
-	sum := sha256.Sum256([]byte(b.Org + "\x00" + b.Tenant + "\x00" + b.Application + "\x00" + b.Stream + "\x00" + id))
-	return "skymill:idempotency:" + hex.EncodeToString(sum[:])
+	sum := sha256.Sum256([]byte(id))
+	return "skymill:{" + b.redisSlotTag() + "}:idempotency:" + hex.EncodeToString(sum[:])
 }
 
 func (b Binding) correlationKey(id string) string {
-	sum := sha256.Sum256([]byte(b.Org + "\x00" + b.Tenant + "\x00" + b.Application + "\x00" + b.Stream + "\x00correlation\x00" + id))
-	return "skymill:correlation:" + hex.EncodeToString(sum[:])
+	sum := sha256.Sum256([]byte(id))
+	return "skymill:{" + b.redisSlotTag() + "}:correlation:" + hex.EncodeToString(sum[:])
 }
