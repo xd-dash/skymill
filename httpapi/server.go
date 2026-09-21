@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -20,15 +19,13 @@ type Server struct {
 	Authenticate Authenticator
 
 	once sync.Once
-	sub  <-chan *message.Message
+	sub  <-chan skymill.Delivery
 	err  error
 
-	mu      sync.Mutex
-	pending map[string]*message.Message
 }
 
 func New(stream *skymill.Stream, authenticate Authenticator) *Server {
-	return &Server{Stream: stream, Authenticate: authenticate, pending: make(map[string]*message.Message)}
+	return &Server{Stream: stream, Authenticate: authenticate}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -37,12 +34,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/deliveries/receive", s.receive)
 	mux.HandleFunc("POST /v1/deliveries/ack", s.ack)
 	mux.HandleFunc("POST /v1/deliveries/nack", s.nack)
+	mux.HandleFunc("POST /v1/workflows/correlate", s.correlate)
+	mux.HandleFunc("POST /v1/workflows/settle", s.settle)
+	mux.HandleFunc("GET /v1/status", s.status)
 	return mux
 }
 
 func (s *Server) authorize(r *http.Request) (context.Context, error) {
 	if s.Authenticate == nil { return r.Context(), nil }
-	return s.Authenticate(r)
+	ctx, err := s.Authenticate(r)
+	if err != nil { return nil, err }
+	return ctx, nil
 }
 
 func (s *Server) ensureSubscriber(ctx context.Context) error {
@@ -53,6 +55,8 @@ func (s *Server) ensureSubscriber(ctx context.Context) error {
 func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
 	ctx, err := s.authorize(r)
 	if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	r = r.WithContext(ctx)
+	if err := requireGrant(r, skymill.ActionPublish, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
 	var req struct {
 		IdempotencyKey string            `json:"idempotency_key"`
 		MessageID      string            `json:"message_id"`
@@ -70,13 +74,15 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
 	result, err := s.Stream.PublishOnce(ctx, req.IdempotencyKey, msg)
 	if err != nil { http.Error(w, err.Error(), http.StatusServiceUnavailable); return }
 	writeJSON(w, map[string]any{
-		"message_id": req.MessageID, "stream_entry_id": result.StreamEntryID, "duplicate": result.Duplicate,
+		"message_id": req.MessageID, "provider_delivery_id": result.ProviderDeliveryID, "duplicate": result.Duplicate,
 	})
 }
 
 func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 	ctx, err := s.authorize(r)
 	if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	r = r.WithContext(ctx)
+	if err := requireGrant(r, skymill.ActionConsume, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
 	var req struct { Limit int `json:"limit"` }
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	if req.Limit <= 0 { req.Limit = 25 }
@@ -85,20 +91,18 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]map[string]any, 0, req.Limit)
 	for len(out) < req.Limit {
-		var msg *message.Message
+		var delivery skymill.Delivery
 		if len(out) == 0 {
-			select { case msg = <-s.sub: case <-ctx.Done(): writeJSON(w, map[string]any{"deliveries": out}); return }
+			select { case delivery = <-s.sub: case <-ctx.Done(): writeJSON(w, map[string]any{"deliveries": out}); return }
 		} else {
-			select { case msg = <-s.sub: default: writeJSON(w, map[string]any{"deliveries": out}); return }
+			select { case delivery = <-s.sub: default: writeJSON(w, map[string]any{"deliveries": out}); return }
 		}
+		msg := delivery.Message
 		if msg == nil { break }
-		token, err := randomToken()
-		if err != nil { msg.Nack(); http.Error(w, err.Error(), http.StatusInternalServerError); return }
-		s.mu.Lock(); s.pending[token] = msg; s.mu.Unlock()
 		md := map[string]string{}
 		for k, v := range msg.Metadata { md[k] = v }
 		out = append(out, map[string]any{
-			"token": token,
+			"provider_delivery_id": delivery.ProviderDeliveryID, "attempt": delivery.Attempt,
 			"message": map[string]any{
 				"id": msg.UUID, "metadata": md,
 				"payload_base64": base64.StdEncoding.EncodeToString(msg.Payload),
@@ -112,22 +116,62 @@ func (s *Server) ack(w http.ResponseWriter, r *http.Request) { s.finish(w, r, tr
 func (s *Server) nack(w http.ResponseWriter, r *http.Request) { s.finish(w, r, false) }
 
 func (s *Server) finish(w http.ResponseWriter, r *http.Request, ack bool) {
-	if _, err := s.authorize(r); err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
-	var req struct { Token string `json:"token"` }
-	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Token == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
-	s.mu.Lock(); msg := s.pending[req.Token]; if msg != nil { delete(s.pending, req.Token) }; s.mu.Unlock()
-	if msg == nil { http.Error(w, "unknown delivery token", http.StatusNotFound); return }
-	if ack { msg.Ack() } else { msg.Nack() }
-	writeJSON(w, map[string]any{"ok": true})
-}
-
-func randomToken() (string, error) {
-	var b [24]byte
-	if _, err := rand.Read(b[:]); err != nil { return "", err }
-	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+	ctx, err := s.authorize(r)
+	if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	r = r.WithContext(ctx)
+	if err := requireGrant(r, skymill.ActionConsume, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
+	var req struct { ProviderDeliveryID string `json:"provider_delivery_id"` }
+	if json.NewDecoder(r.Body).Decode(&req) != nil || req.ProviderDeliveryID == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
+	delivery, err := s.Stream.ResolveDelivery(ctx, req.ProviderDeliveryID)
+	if err != nil { http.Error(w, err.Error(), http.StatusNotFound); return }
+	if delivery.ConsumerGroup != s.Stream.ConsumerGroup() { http.Error(w, "delivery consumer group mismatch", http.StatusConflict); return }
+	if ack {
+		acked, err := s.Stream.AckDelivery(ctx, delivery)
+		if err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
+		if !acked { http.Error(w, "delivery is not pending", http.StatusConflict); return }
+	} else {
+		if err := s.Stream.NackDelivery(ctx, delivery); err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
+	}
+	writeJSON(w, map[string]any{"ok": true, "provider_delivery_id": delivery.ProviderDeliveryID})
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("content-type", "application/json")
 	if err := json.NewEncoder(w).Encode(value); err != nil && !errors.Is(err, context.Canceled) { return }
+}
+
+
+func (s *Server) correlate(w http.ResponseWriter, r *http.Request) {
+	ctx, err := s.authorize(r); if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	r = r.WithContext(ctx)
+	if err := requireGrant(r, skymill.ActionSettle, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
+	var req struct {
+		ID string `json:"id"`
+		MessageID string `json:"message_id"`
+		ProviderDeliveryID string `json:"provider_delivery_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil || req.ID == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
+	err = s.Stream.Correlate(ctx, skymill.Correlation{ID:req.ID, MessageID:req.MessageID, ProviderDeliveryID:req.ProviderDeliveryID, ConsumerGroup:s.Stream.ConsumerGroup()})
+	if err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
+	writeJSON(w, map[string]any{"ok":true})
+}
+
+func (s *Server) settle(w http.ResponseWriter, r *http.Request) {
+	ctx, err := s.authorize(r); if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	r = r.WithContext(ctx)
+	if err := requireGrant(r, skymill.ActionSettle, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
+	var req struct { ID string `json:"id"`; State skymill.WorkflowState `json:"state"`; ResultRef string `json:"result_ref"`; Error string `json:"error"` }
+	if json.NewDecoder(r.Body).Decode(&req) != nil || req.ID == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
+	result, err := s.Stream.SettleAndAck(ctx, req.ID, req.State, req.ResultRef, req.Error)
+	if err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
+	writeJSON(w, result)
+}
+
+func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+	ctx, err := s.authorize(r); if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	r = r.WithContext(ctx)
+	if err := requireGrant(r, skymill.ActionInspect, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
+	status, err := s.Stream.Status(ctx)
+	if err != nil { http.Error(w, err.Error(), http.StatusServiceUnavailable); return }
+	writeJSON(w, status)
 }

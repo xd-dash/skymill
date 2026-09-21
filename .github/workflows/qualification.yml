@@ -1,0 +1,51 @@
+name: qualification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - codex/logma-hints-hardening
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    env:
+      SKYMILL_TEST_REDIS_ADDR: 127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Resolve verified module graph
+        run: go mod tidy
+      - name: Test generic and Redis durability contracts
+        run: go test ./...
+      - name: Require committed module graph
+        run: git diff --exit-code -- go.mod go.sum
+      - name: Upload resolved module graph
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolved-module-graph
+          path: |
+            go.mod
+            go.sum
+          if-no-files-found: error
+          retention-days: 1
+      # A clean checkout must reproduce the committed graph exactly.
+      # HTTP adapter conformance changes are qualified by the same suite.
+          overwrite: true
