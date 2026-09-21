@@ -45,7 +45,8 @@ func (s *Stream) AckDelivery(ctx context.Context, d Delivery) (bool, error) {
 	if err != nil { return false, err }
 	if acked {
 		s.metric(ctx, "delivery.acked", 1, map[string]string{"consumer_group":s.group})
-		s.emitHint(ctx, Hint{Kind:HintAcked,MessageID:d.Message.UUID,ProviderDeliveryID:d.ProviderDeliveryID,ConsumerGroup:d.ConsumerGroup})
+		messageID:=""; if d.Message!=nil { messageID=d.Message.UUID }
+		s.emitHint(ctx, Hint{Kind:HintAcked,MessageID:messageID,ProviderDeliveryID:d.ProviderDeliveryID,ConsumerGroup:d.ConsumerGroup})
 	}
 	return acked,nil
 }
