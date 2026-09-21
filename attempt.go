@@ -23,6 +23,7 @@ type Delivery struct {
 // DeliveryState asks Redis for the authoritative PEL record for an entry.
 // Redis' delivery counter survives consumer death and XCLAIM, unlike message metadata.
 func (s *Stream) DeliveryState(ctx context.Context, streamEntryID string) (Delivery, error) {
+	if err := s.authorize(ctx, ActionInspect); err != nil { return Delivery{}, err }
 	if s.group == "" { return Delivery{}, errors.New("skymill: delivery state requires a consumer group") }
 	rows, err := s.client.XPendingExt(ctx, &redis.XPendingExtArgs{
 		Stream: s.binding.Stream, Group: s.group, Start: streamEntryID, End: streamEntryID, Count: 1,
