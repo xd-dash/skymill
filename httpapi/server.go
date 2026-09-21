@@ -2,12 +2,10 @@ package httpapi
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sync"
 
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/xd-dash/skymill"
@@ -19,16 +17,11 @@ type Server struct {
 	Stream       *skymill.Stream
 	Authenticate Authenticator
 
-	once sync.Once
-	sub  <-chan skymill.Delivery
-	err  error
-
-	mu      sync.Mutex
-	pending map[string]skymill.Delivery
+	sub <-chan skymill.Delivery
 }
 
 func New(stream *skymill.Stream, authenticate Authenticator) *Server {
-	return &Server{Stream: stream, Authenticate: authenticate, pending: make(map[string]skymill.Delivery)}
+	return &Server{Stream: stream, Authenticate: authenticate}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -51,8 +44,11 @@ func (s *Server) authorize(r *http.Request) (context.Context, error) {
 }
 
 func (s *Server) ensureSubscriber(ctx context.Context) error {
-	s.once.Do(func() { s.sub, s.err = s.Stream.Subscribe(context.Background()) })
-	return s.err
+	if s.sub != nil { return nil }
+	sub, err := s.Stream.Subscribe(context.Background())
+	if err != nil { return err }
+	s.sub = sub
+	return nil
 }
 
 func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
@@ -102,13 +98,10 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 		}
 		msg := delivery.Message
 		if msg == nil { break }
-		token, err := randomToken()
-		if err != nil { _ = s.Stream.NackDelivery(ctx, delivery); http.Error(w, err.Error(), http.StatusInternalServerError); return }
-		s.mu.Lock(); s.pending[token] = delivery; s.mu.Unlock()
 		md := map[string]string{}
 		for k, v := range msg.Metadata { md[k] = v }
 		out = append(out, map[string]any{
-			"token": token, "provider_delivery_id": delivery.ProviderDeliveryID, "attempt": delivery.Attempt,
+			"provider_delivery_id": delivery.ProviderDeliveryID, "attempt": delivery.Attempt,
 			"message": map[string]any{
 				"id": msg.UUID, "metadata": md,
 				"payload_base64": base64.StdEncoding.EncodeToString(msg.Payload),
@@ -126,22 +119,16 @@ func (s *Server) finish(w http.ResponseWriter, r *http.Request, ack bool) {
 	if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
 	r = r.WithContext(ctx)
 	if err := requireGrant(r, skymill.ActionConsume, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
-	var req struct { Token string `json:"token"` }
-	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Token == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
-	s.mu.Lock(); delivery, ok := s.pending[req.Token]; if ok { delete(s.pending, req.Token) }; s.mu.Unlock()
-	if !ok { http.Error(w, "unknown delivery token", http.StatusNotFound); return }
+	var req struct { ProviderDeliveryID string `json:"provider_delivery_id"` }
+	if json.NewDecoder(r.Body).Decode(&req) != nil || req.ProviderDeliveryID == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
+	delivery, err := s.Stream.DeliveryState(ctx, req.ProviderDeliveryID)
+	if err != nil { http.Error(w, err.Error(), http.StatusNotFound); return }
 	if ack {
 		if _, err := s.Stream.AckDelivery(r.Context(), delivery); err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
 	} else {
 		if err := s.Stream.NackDelivery(r.Context(), delivery); err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
 	}
 	writeJSON(w, map[string]any{"ok": true})
-}
-
-func randomToken() (string, error) {
-	var b [24]byte
-	if _, err := rand.Read(b[:]); err != nil { return "", err }
-	return base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
