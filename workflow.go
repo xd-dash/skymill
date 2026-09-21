@@ -3,6 +3,7 @@ package skymill
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 type WorkflowState string
