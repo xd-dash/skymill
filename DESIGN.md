@@ -130,3 +130,14 @@ The Redis Streams adapter implements that contract with Watermill and go-redis. 
 Atomicity is intentionally part of the provider contract: `SettleAndAck` must make workflow terminal state and transport acknowledgement one retry-safe provider operation. For Redis Streams this is one Lua operation over the correlation hash and XACK, avoiding the earlier failure window between terminal settlement and ACK.
 
 Tests at the generic layer use a fake DurableProvider and verify durable-attempt policy, DLQ failure behavior, and settlement delegation without importing Redis. Provider-specific crash/reclaim integration tests belong with the Redis adapter.
+
+
+## Delivery identity qualification
+
+The provider boundary now carries `Delivery` envelopes through subscription, not bare Watermill messages. This is required for durable workflow semantics: Watermill Redis Stream messages expose the Watermill UUID but the upstream subscriber keeps the Redis XID inside its message handler for ACK/NACK and does not attach that XID to the returned `message.Message`.
+
+Accordingly, the Redis adapter uses Watermill's message type, wire marshaller, and publisher, while Skymill owns the consumer-group read/claim loop that must preserve the provider delivery identity. Redis-specific XREADGROUP/XPENDING/XCLAIM remains entirely inside the adapter. Applications see only `ProviderDeliveryID`, `Attempt`, and the Watermill message.
+
+A NACK is defined generically as "not acknowledged; eligible for provider redelivery". On the baseline Redis adapter it leaves the entry in the PEL and reclaim performs the later delivery. This avoids requiring Redis-version-specific immediate-release commands in the generic contract.
+
+The Redis integration qualification now covers duplicate publish-once, durable PEL attempt count across XCLAIM, DLQ failure without source ACK, repeatable settle-and-ACK after the original worker disappears, and subscription delivery identity surviving consumer cancellation/reclaim.
