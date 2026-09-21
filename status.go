@@ -17,6 +17,7 @@ type Status struct {
 }
 
 func (s *Stream) Status(ctx context.Context) (Status, error) {
+	if err := s.authorize(ctx, ActionInspect); err != nil { return Status{}, err }
 	st := Status{Binding: s.binding, ConsumerGroup: s.group}
 	length, err := s.client.XLen(ctx, s.binding.Stream).Result()
 	if err != nil && err != redis.Nil { return Status{}, err }
