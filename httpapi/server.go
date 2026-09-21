@@ -37,6 +37,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/deliveries/receive", s.receive)
 	mux.HandleFunc("POST /v1/deliveries/ack", s.ack)
 	mux.HandleFunc("POST /v1/deliveries/nack", s.nack)
+	mux.HandleFunc("POST /v1/workflows/correlate", s.correlate)
+	mux.HandleFunc("POST /v1/workflows/settle", s.settle)
+	mux.HandleFunc("GET /v1/status", s.status)
 	return mux
 }
 
@@ -147,4 +150,36 @@ func randomToken() (string, error) {
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("content-type", "application/json")
 	if err := json.NewEncoder(w).Encode(value); err != nil && !errors.Is(err, context.Canceled) { return }
+}
+
+
+func (s *Server) correlate(w http.ResponseWriter, r *http.Request) {
+	ctx, err := s.authorize(r); if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	r = r.WithContext(ctx)
+	if err := requireGrant(r, Settle, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
+	var req struct { ID, MessageID, StreamEntryID string }
+	if json.NewDecoder(r.Body).Decode(&req) != nil || req.ID == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
+	err = s.Stream.Correlate(ctx, skymill.Correlation{ID:req.ID, MessageID:req.MessageID, StreamEntryID:req.StreamEntryID, ConsumerGroup:s.Stream.ConsumerGroup()})
+	if err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
+	writeJSON(w, map[string]any{"ok":true})
+}
+
+func (s *Server) settle(w http.ResponseWriter, r *http.Request) {
+	ctx, err := s.authorize(r); if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	r = r.WithContext(ctx)
+	if err := requireGrant(r, Settle, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
+	var req struct { ID string `json:"id"`; State skymill.WorkflowState `json:"state"`; ResultRef string `json:"result_ref"`; Error string `json:"error"` }
+	if json.NewDecoder(r.Body).Decode(&req) != nil || req.ID == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
+	result, err := s.Stream.SettleAndAck(ctx, req.ID, req.State, req.ResultRef, req.Error)
+	if err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
+	writeJSON(w, result)
+}
+
+func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+	ctx, err := s.authorize(r); if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	r = r.WithContext(ctx)
+	if err := requireGrant(r, Consume, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
+	status, err := s.Stream.Status(ctx)
+	if err != nil { http.Error(w, err.Error(), http.StatusServiceUnavailable); return }
+	writeJSON(w, status)
 }
