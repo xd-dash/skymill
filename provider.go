@@ -18,6 +18,7 @@ type DurableProvider interface {
 	DeliveryState(context.Context, string) (Delivery, error)
 	DeadLetter(context.Context, Delivery, *message.Message, string) error
 	Ack(context.Context, string, string) (bool, error)
+	Nack(context.Context, Delivery) error
 	Status(context.Context) (ProviderStatus, error)
 
 	CreateCorrelation(context.Context, Binding, Correlation, WorkflowPolicy) (bool, error)
