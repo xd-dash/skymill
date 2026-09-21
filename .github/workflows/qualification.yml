@@ -30,7 +30,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Resolve module graph
+      - name: Resolve verified module graph
         run: go mod tidy
       - name: Test generic and Redis durability contracts
         run: go test ./...
