@@ -18,7 +18,7 @@ func (s *Stream) PrepareDelivery(ctx context.Context, providerDeliveryID string,
 
 	if err := s.provider.DeadLetter(ctx, state, msg, s.policy.Retry.DeadLetterStream); err != nil { return false, err }
 	s.metric(ctx, "delivery.dead_lettered", 1, map[string]string{"consumer_group": s.group})
-	s.emitHint(ctx, Hint{Kind: HintDeadLettered, MessageID: msg.UUID, StreamEntryID: providerDeliveryID, ConsumerGroup: s.group})
+	s.emitHint(ctx, Hint{Kind: HintDeadLettered, MessageID: msg.UUID, ProviderDeliveryID: providerDeliveryID, ConsumerGroup: s.group})
 	return false, nil
 }
 
