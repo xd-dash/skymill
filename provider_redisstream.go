@@ -11,7 +11,7 @@ import (
  "github.com/redis/go-redis/v9"
 )
 type RedisStreamProviderConfig struct { Client redis.UniversalClient; Binding Binding; ConsumerGroup,Consumer string; MaxLen int64; NackResendSleep,BlockTime,ClaimInterval,MaxIdleTime,ConsumerTimeout time.Duration; ClaimBatchSize int64; Logger watermill.LoggerAdapter }
-type redisStreamProvider struct { client redis.UniversalClient; binding Binding; group,consumerName string; marshaller redisstream.Marshaller; publisher *redisstream.Publisher; claimInterval,blockTime,maxIdle time.Duration; claimBatch int64; cancel context.CancelFunc; wg sync.WaitGroup }
+type redisStreamProvider struct { client redis.UniversalClient; binding Binding; group,consumerName string; marshaller redisstream.MarshallerUnmarshaller; publisher *redisstream.Publisher; claimInterval,blockTime,maxIdle time.Duration; claimBatch int64; cancel context.CancelFunc; wg sync.WaitGroup }
 func newRedisStreamProvider(c RedisStreamProviderConfig)(*redisStreamProvider,error){
  l:=c.Logger;if l==nil{l=watermill.NopLogger{}}
  m:=redisstream.DefaultMarshallerUnmarshaller{};ml:=map[string]int64{};if c.MaxLen>0{ml[c.Binding.Stream]=c.MaxLen}
@@ -45,7 +45,7 @@ func(p *redisStreamProvider)claim(ctx context.Context,out chan<- Delivery){
  for _,row:=range rows{xms,e:=p.client.XClaim(ctx,&redis.XClaimArgs{Stream:p.binding.Stream,Group:p.group,Consumer:p.consumer(),MinIdle:p.maxIdle,Messages:[]string{row.ID}}).Result();if e!=nil{continue};for _,xm:=range xms{if !p.send(ctx,out,xm){return}}}
 }
 func(p *redisStreamProvider)send(ctx context.Context,out chan<- Delivery,xm redis.XMessage)bool{
- msg,e:=p.marshaller.(redisstream.Unmarshaller).Unmarshal(xm.Values);if e!=nil{return true}
+ msg,e:=p.marshaller.Unmarshal(xm.Values);if e!=nil{return true}
  d,e:=p.DeliveryState(ctx,xm.ID);if e!=nil{return true};d.Message=msg
  select{case out<-d:return true;case<-ctx.Done():return false}
 }
@@ -54,7 +54,7 @@ func(p *redisStreamProvider)DeadLetter(ctx context.Context,d Delivery,msg *messa
 func(p *redisStreamProvider)Ack(ctx context.Context,g,id string)(bool,error){n,e:=p.client.XAck(ctx,p.binding.Stream,g,id).Result();return n>0,e}
 func(p *redisStreamProvider)Nack(ctx context.Context,d Delivery)error{return nil}
 func(p *redisStreamProvider)Status(ctx context.Context)(ProviderStatus,error){var s ProviderStatus;n,e:=p.client.XLen(ctx,p.binding.Stream).Result();if e!=nil&&e!=redis.Nil{return s,e};s.StreamLength=n;if p.group==""{return s,nil};x,e:=p.client.XPending(ctx,p.binding.Stream,p.group).Result();if e!=nil&&e!=redis.Nil{return s,e};if x!=nil{s.Pending=PendingStats{Count:x.Count,LowestID:x.Lower,HighestID:x.Higher,Consumers:int64(len(x.Consumers))}};cs,e:=p.client.XInfoConsumers(ctx,p.binding.Stream,p.group).Result();if e!=nil&&e!=redis.Nil{return s,e};s.Consumers=int64(len(cs));if s.Pending.Count>0{x,e:=p.client.XPendingExt(ctx,&redis.XPendingExtArgs{Stream:p.binding.Stream,Group:p.group,Start:"-",End:"+",Count:1}).Result();if e!=nil&&e!=redis.Nil{return s,e};if len(x)>0{s.OldestPendingIdle=x[0].Idle}};return s,nil}
-func(p *redisStreamProvider)Close()error{if p.cancel!=nil{p.cancel()};p.wg.Wait();return p.publisher.Close()};if e:=p.publisher.Close();e!=nil&&x==nil{x=e};return x}
+func(p *redisStreamProvider)Close()error{if p.cancel!=nil{p.cancel()};p.wg.Wait();return nil}
 
 func(p *redisStreamProvider)CreateCorrelation(ctx context.Context,b Binding,c Correlation,w WorkflowPolicy)(bool,error){now:=time.Now().UTC();key:=b.correlationKey(c.ID);script:="if redis.call('EXISTS',KEYS[1])==1 then return 0 end;redis.call('HSET',KEYS[1],'id',ARGV[1],'message_id',ARGV[2],'stream_entry_id',ARGV[3],'consumer_group',ARGV[4],'state','pending','created_at',ARGV[5]);if tonumber(ARGV[6])>0 then redis.call('PEXPIRE',KEYS[1],ARGV[6]) end;return 1";n,e:=p.client.Eval(ctx,script,[]string{key},c.ID,c.MessageID,c.ProviderDeliveryID,c.ConsumerGroup,now.Format(time.RFC3339Nano),w.CorrelationTTL.Milliseconds()).Int();return n==1,e}
 func(p *redisStreamProvider)GetCorrelation(ctx context.Context,b Binding,id string)(Correlation,error){x,e:=p.client.HGetAll(ctx,b.correlationKey(id)).Result();if e!=nil{return Correlation{},e};if len(x)==0{return Correlation{},nil};c:=Correlation{ID:x["id"],MessageID:x["message_id"],ProviderDeliveryID:x["stream_entry_id"],ConsumerGroup:x["consumer_group"],State:WorkflowState(x["state"]),ResultRef:x["result_ref"],Error:x["error"]};c.CreatedAt,_=time.Parse(time.RFC3339Nano,x["created_at"]);if t,e:=time.Parse(time.RFC3339Nano,x["settled_at"]);e==nil{c.SettledAt=&t};return c,nil}
