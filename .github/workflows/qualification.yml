@@ -46,3 +46,4 @@ jobs:
             go.sum
           if-no-files-found: error
           retention-days: 1
+          overwrite: true
