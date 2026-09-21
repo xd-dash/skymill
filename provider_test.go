@@ -23,6 +23,7 @@ func(f *fakeProvider)Subscribe(context.Context)(<-chan Delivery,error){return ma
 func(f *fakeProvider)DeliveryState(context.Context,string)(Delivery,error){return f.delivery,nil}
 func(f *fakeProvider)DeadLetter(context.Context,Delivery,*message.Message,string)error{return f.deadLetterErr}
 func(f *fakeProvider)Ack(context.Context,string,string)(bool,error){return f.acked,nil}
+func(f *fakeProvider)Nack(context.Context,Delivery)error{return nil}
 func(f *fakeProvider)Status(context.Context)(ProviderStatus,error){return f.status,nil}
 func(f *fakeProvider)CreateCorrelation(context.Context,Binding,Correlation,WorkflowPolicy)(bool,error){return true,nil}
 func(f *fakeProvider)GetCorrelation(context.Context,Binding,string)(Correlation,error){return f.correlation,nil}
