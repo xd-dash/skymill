@@ -20,15 +20,15 @@ type Server struct {
 	Authenticate Authenticator
 
 	once sync.Once
-	sub  <-chan *message.Message
+	sub  <-chan skymill.Delivery
 	err  error
 
 	mu      sync.Mutex
-	pending map[string]*message.Message
+	pending map[string]skymill.Delivery
 }
 
 func New(stream *skymill.Stream, authenticate Authenticator) *Server {
-	return &Server{Stream: stream, Authenticate: authenticate, pending: make(map[string]*message.Message)}
+	return &Server{Stream: stream, Authenticate: authenticate, pending: make(map[string]skymill.Delivery)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -94,20 +94,21 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]map[string]any, 0, req.Limit)
 	for len(out) < req.Limit {
-		var msg *message.Message
+		var delivery skymill.Delivery
 		if len(out) == 0 {
-			select { case msg = <-s.sub: case <-ctx.Done(): writeJSON(w, map[string]any{"deliveries": out}); return }
+			select { case delivery = <-s.sub: case <-ctx.Done(): writeJSON(w, map[string]any{"deliveries": out}); return }
 		} else {
-			select { case msg = <-s.sub: default: writeJSON(w, map[string]any{"deliveries": out}); return }
+			select { case delivery = <-s.sub: default: writeJSON(w, map[string]any{"deliveries": out}); return }
 		}
+		msg := delivery.Message
 		if msg == nil { break }
 		token, err := randomToken()
-		if err != nil { msg.Nack(); http.Error(w, err.Error(), http.StatusInternalServerError); return }
-		s.mu.Lock(); s.pending[token] = msg; s.mu.Unlock()
+		if err != nil { _ = s.Stream.NackDelivery(ctx, delivery); http.Error(w, err.Error(), http.StatusInternalServerError); return }
+		s.mu.Lock(); s.pending[token] = delivery; s.mu.Unlock()
 		md := map[string]string{}
 		for k, v := range msg.Metadata { md[k] = v }
 		out = append(out, map[string]any{
-			"token": token,
+			"token": token, "provider_delivery_id": delivery.ProviderDeliveryID, "attempt": delivery.Attempt,
 			"message": map[string]any{
 				"id": msg.UUID, "metadata": md,
 				"payload_base64": base64.StdEncoding.EncodeToString(msg.Payload),
@@ -127,16 +128,13 @@ func (s *Server) finish(w http.ResponseWriter, r *http.Request, ack bool) {
 	if err := requireGrant(r, skymill.ActionConsume, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
 	var req struct { Token string `json:"token"` }
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Token == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
-	s.mu.Lock(); msg := s.pending[req.Token]; if msg != nil { delete(s.pending, req.Token) }; s.mu.Unlock()
-	if msg == nil { http.Error(w, "unknown delivery token", http.StatusNotFound); return }
+	s.mu.Lock(); delivery, ok := s.pending[req.Token]; if ok { delete(s.pending, req.Token) }; s.mu.Unlock()
+	if !ok { http.Error(w, "unknown delivery token", http.StatusNotFound); return }
+	msg := delivery.Message
 	if ack {
-		msg.Ack()
-		s.Stream.ObserveAck(r.Context(), true)
-		s.Stream.EmitCompletionHint(r.Context(), skymill.HintAcked, msg.UUID, "")
+		if _, err := s.Stream.AckDelivery(r.Context(), delivery); err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
 	} else {
-		msg.Nack()
-		s.Stream.ObserveAck(r.Context(), false)
-		s.Stream.EmitCompletionHint(r.Context(), skymill.HintNacked, msg.UUID, "")
+		if err := s.Stream.NackDelivery(r.Context(), delivery); err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
 	}
 	writeJSON(w, map[string]any{"ok": true})
 }
