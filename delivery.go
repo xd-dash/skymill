@@ -10,6 +10,7 @@ import (
 )
 
 func (s *Stream) PrepareDelivery(ctx context.Context, streamEntryID string, msg *message.Message) (bool, error) {
+	if err := s.authorize(ctx, ActionInspect); err != nil { return false, err }
 	if msg == nil { return false, errors.New("skymill: nil delivery") }
 	if s.policy.Retry.MaxDeliveries == 0 { return true, nil }
 	state, err := s.DeliveryState(ctx, streamEntryID)
@@ -45,6 +46,7 @@ type PendingStats struct {
 }
 
 func (s *Stream) Pending(ctx context.Context) (PendingStats, error) {
+	if err := s.authorize(ctx, ActionInspect); err != nil { return PendingStats{}, err }
 	if s.group == "" { return PendingStats{}, errors.New("skymill: pending stats require a consumer group") }
 	p, err := s.client.XPending(ctx, s.binding.Stream, s.group).Result()
 	if err != nil && err != redis.Nil { return PendingStats{}, err }
