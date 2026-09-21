@@ -110,3 +110,12 @@ Close
 The Redis Streams adapter is the first implementation and may use Watermill plus go-redis internally. Skymill's policy, authorization, workflow composition, metrics, and Logma hints operate only on provider-neutral `Delivery`, `ProviderStatus`, `PublishResult`, and `Correlation` values.
 
 This boundary is intentionally coarse. New providers should implement the durability semantics as a unit rather than growing one provider-specific interface method whenever an application discovers another Redis command it needs. Application code must not depend on Redis stream IDs; `ProviderDeliveryID` is opaque.
+
+
+## Durable provider boundary
+
+The generic Stream layer no longer owns Redis transport mechanics. DurableProvider is the single internal boundary for publish, publish-once, subscription, provider delivery state, dead-letter, ACK, status, and durable workflow correlation storage. The Redis Streams adapter owns Watermill construction plus XADD/XACK/XPENDING/XLEN/XINFO and Redis correlation hashes.
+
+Application-visible delivery identity is ProviderDeliveryID. Redis XIDs are one adapter representation, not part of the Skymill contract.
+
+Contract tests use a fake DurableProvider to exercise bounded-retry/DLQ failure, settlement after the original worker is gone, repeated terminal settlement with ACK retry, and provider-neutral status. Provider-specific integration tests should separately exercise Redis crash/reclaim behavior.
