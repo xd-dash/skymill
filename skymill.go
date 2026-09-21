@@ -52,7 +52,6 @@ type Stream struct {
 	hints      HintPublisher
 	metrics    Metrics
 	policy     Policy
-	client     redis.UniversalClient
 	provider DurableProvider
 }
 
@@ -117,7 +116,6 @@ func (s *Stream) PublishOnce(ctx context.Context, idempotencyKey string, msg *me
 	pubResult, err := s.provider.PublishOnce(ctx, idempotencyKey, msg, s.policy.Retention)
 	if err != nil { return PublishResult{}, err }
 	s.metric(ctx, "publish.accepted", 1, map[string]string{"duplicate": map[bool]string{true:"1",false:"0"}[pubResult.Duplicate]})
-	pubResult := PublishResult{ProviderDeliveryID: pubResult.ProviderDeliveryID, Duplicate: pubResult.Duplicate}
 	s.emitHint(ctx, Hint{
 		Kind: HintActivity, MessageID: msg.UUID, StreamEntryID: pubResult.ProviderDeliveryID, Duplicate: pubResult.Duplicate,
 	})
