@@ -130,7 +130,6 @@ func (s *Server) finish(w http.ResponseWriter, r *http.Request, ack bool) {
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.Token == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
 	s.mu.Lock(); delivery, ok := s.pending[req.Token]; if ok { delete(s.pending, req.Token) }; s.mu.Unlock()
 	if !ok { http.Error(w, "unknown delivery token", http.StatusNotFound); return }
-	msg := delivery.Message
 	if ack {
 		if _, err := s.Stream.AckDelivery(r.Context(), delivery); err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
 	} else {
