@@ -8,20 +8,12 @@ import (
 	"github.com/xd-dash/skymill"
 )
 
-type Operation string
-
-const (
-	Publish Operation = "publish"
-	Consume Operation = "consume"
-	Settle Operation = "settle"
-)
-
-// Grant is the binding-derived authority established by authentication.
-// Request bodies never select stream/group authority.
+// Grant is the compiled authority established by authentication. It mirrors
+// Skymill actions rather than defining a second HTTP-specific ACL vocabulary.
 type Grant struct {
 	Binding       skymill.Binding
 	ConsumerGroup string
-	Operations    map[Operation]bool
+	Actions       map[skymill.Action]bool
 	Principal     string
 }
 
@@ -36,11 +28,11 @@ func GrantFromContext(ctx context.Context) (Grant, bool) {
 	return g, ok
 }
 
-func requireGrant(r *http.Request, operation Operation, expected skymill.Binding, group string) error {
+func requireGrant(r *http.Request, action skymill.Action, expected skymill.Binding, group string) error {
 	g, ok := GrantFromContext(r.Context())
 	if !ok { return errors.New("missing authority grant") }
-	if !g.Operations[operation] { return errors.New("operation not authorized") }
+	if !g.Actions[action] { return errors.New("action not authorized") }
 	if g.Binding != expected { return errors.New("binding mismatch") }
-	if operation != Publish && g.ConsumerGroup != group { return errors.New("consumer group mismatch") }
+	if action != skymill.ActionPublish && g.ConsumerGroup != group { return errors.New("consumer group mismatch") }
 	return nil
 }
