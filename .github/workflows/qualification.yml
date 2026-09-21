@@ -47,4 +47,5 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       # A clean checkout must reproduce the committed graph exactly.
+      # HTTP adapter conformance changes are qualified by the same suite.
           overwrite: true
