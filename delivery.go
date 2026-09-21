@@ -3,22 +3,20 @@ package skymill
 import (
 	"context"
 	"errors"
-	"strconv"
 
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/ThreeDotsLabs/watermill-redisstream/pkg/redisstream"
 	"github.com/redis/go-redis/v9"
 )
 
-const deliveryCountMetadata = "skymill_delivery_count"
-
-func (s *Stream) PrepareDelivery(ctx context.Context, msg *message.Message) (bool, error) {
+func (s *Stream) PrepareDelivery(ctx context.Context, streamEntryID string, msg *message.Message) (bool, error) {
 	if msg == nil { return false, errors.New("skymill: nil delivery") }
 	if s.policy.Retry.MaxDeliveries == 0 { return true, nil }
-	count, _ := strconv.ParseInt(msg.Metadata.Get(deliveryCountMetadata), 10, 64)
-	count++
-	msg.Metadata.Set(deliveryCountMetadata, strconv.FormatInt(count, 10))
-	if count <= s.policy.Retry.MaxDeliveries { return true, nil }
+	state, err := s.DeliveryState(ctx, streamEntryID)
+	if err != nil { return false, err }
+	s.metric(ctx, "delivery.attempt", float64(state.Deliveries), map[string]string{"consumer_group": s.group})
+	if state.Deliveries <= s.policy.Retry.MaxDeliveries { return true, nil }
+
 	values, err := s.marshaller.Marshal(s.policy.Retry.DeadLetterStream, msg)
 	if err != nil { return false, err }
 	uuid, _ := values[redisstream.UUIDHeaderKey].(string)
@@ -32,10 +30,10 @@ func (s *Stream) PrepareDelivery(ctx context.Context, msg *message.Message) (boo
 		redis.call('SET', KEYS[1], id)
 		return id
 	`
-	key := s.binding.idempotencyKey("dlq:" + msg.UUID)
+	key := s.binding.idempotencyKey("dlq:" + s.group + ":" + streamEntryID)
 	if _, err := s.client.Eval(ctx, script, []string{key, s.policy.Retry.DeadLetterStream}, uuid, metadata, payload).Result(); err != nil { return false, err }
 	s.metric(ctx, "delivery.dead_lettered", 1, map[string]string{"consumer_group": s.group})
-	s.emitHint(ctx, Hint{Kind: HintDeadLettered, MessageID: msg.UUID, ConsumerGroup: s.group})
+	s.emitHint(ctx, Hint{Kind: HintDeadLettered, MessageID: msg.UUID, StreamEntryID: streamEntryID, ConsumerGroup: s.group})
 	return false, nil
 }
 
