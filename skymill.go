@@ -20,14 +20,6 @@ type Binding struct {
 	Stream      string
 }
 
-// Authorizer is implemented by Fatline-facing policy adapters.
-// Skymill owns stream mechanics; callers own authentication and policy.
-type Authorizer interface {
-	AuthorizePublish(context.Context, Binding) error
-	AuthorizeConsume(context.Context, Binding, string) error
-	AuthorizeSettle(context.Context, Binding, string) error
-}
-
 type Config struct {
 	Client redis.UniversalClient
 
@@ -120,11 +112,7 @@ func New(config Config) (*Stream, error) {
 }
 
 func (s *Stream) Publish(ctx context.Context, messages ...*message.Message) error {
-	if s.authorizer != nil {
-		if err := s.authorizer.AuthorizePublish(ctx, s.binding); err != nil {
-			return err
-		}
-	}
+	if err := s.authorize(ctx, ActionPublish); err != nil { return err }
 	for _, msg := range messages {
 		if msg == nil {
 			return errors.New("skymill: nil message")
@@ -153,11 +141,7 @@ func (s *Stream) PublishOnce(ctx context.Context, idempotencyKey string, msg *me
 	if msg == nil {
 		return PublishResult{}, errors.New("skymill: nil message")
 	}
-	if s.authorizer != nil {
-		if err := s.authorizer.AuthorizePublish(ctx, s.binding); err != nil {
-			return PublishResult{}, err
-		}
-	}
+	if err := s.authorize(ctx, ActionPublish); err != nil { return PublishResult{}, err }
 	values, err := s.marshaller.Marshal(s.binding.Stream, msg)
 	if err != nil {
 		return PublishResult{}, err
@@ -201,11 +185,7 @@ func (s *Stream) Binding() Binding { return s.binding }
 func (s *Stream) ConsumerGroup() string { return s.group }
 
 func (s *Stream) Subscribe(ctx context.Context) (<-chan *message.Message, error) {
-	if s.authorizer != nil {
-		if err := s.authorizer.AuthorizeConsume(ctx, s.binding, s.group); err != nil {
-			return nil, err
-		}
-	}
+	if err := s.authorize(ctx, ActionConsume); err != nil { return nil, err }
 	return s.subscriber.Subscribe(ctx, s.binding.Stream)
 }
 
