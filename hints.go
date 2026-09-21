@@ -12,7 +12,7 @@ type Hint struct {
 	Kind          string
 	Binding       Binding
 	MessageID     string
-	StreamEntryID string
+	ProviderDeliveryID string
 	ConsumerGroup string
 	Duplicate     bool
 	Error         string
