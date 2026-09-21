@@ -24,8 +24,8 @@ type Config struct {
 
 	Binding Binding
 
-	// ConsumerGroup enables durable competing-consumer semantics.
-	// An empty group uses the provider's fan-out mode.
+	// ConsumerGroup enables durable competing-consumer semantics. It may be
+	// empty for publish-only bindings; Subscribe requires a group.
 	ConsumerGroup string
 	Consumer      string
 
