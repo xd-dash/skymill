@@ -157,7 +157,11 @@ func (s *Server) correlate(w http.ResponseWriter, r *http.Request) {
 	ctx, err := s.authorize(r); if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
 	r = r.WithContext(ctx)
 	if err := requireGrant(r, Settle, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
-	var req struct { ID, MessageID, StreamEntryID string }
+	var req struct {
+		ID string `json:"id"`
+		MessageID string `json:"message_id"`
+		StreamEntryID string `json:"stream_entry_id"`
+	}
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.ID == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
 	err = s.Stream.Correlate(ctx, skymill.Correlation{ID:req.ID, MessageID:req.MessageID, StreamEntryID:req.StreamEntryID, ConsumerGroup:s.Stream.ConsumerGroup()})
 	if err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
