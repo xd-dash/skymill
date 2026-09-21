@@ -36,3 +36,27 @@ func (s *Stream) Pending(ctx context.Context) (PendingStats, error) {
 	if err != nil { return PendingStats{}, err }
 	return status.Pending, nil
 }
+
+
+func (s *Stream) AckDelivery(ctx context.Context, d Delivery) (bool, error) {
+	if err := s.authorize(ctx, ActionConsume); err != nil { return false, err }
+	if d.ConsumerGroup != s.group { return false, errors.New("skymill: delivery consumer group mismatch") }
+	acked, err := s.provider.Ack(ctx, d.ConsumerGroup, d.ProviderDeliveryID)
+	if err != nil { return false, err }
+	if acked {
+		s.metric(ctx, "delivery.acked", 1, map[string]string{"consumer_group":s.group})
+		s.emitHint(ctx, Hint{Kind:HintAcked,MessageID:d.Message.UUID,ProviderDeliveryID:d.ProviderDeliveryID,ConsumerGroup:d.ConsumerGroup})
+	}
+	return acked,nil
+}
+
+func (s *Stream) NackDelivery(ctx context.Context, d Delivery) error {
+	if err := s.authorize(ctx, ActionConsume); err != nil { return err }
+	if d.ConsumerGroup != s.group { return errors.New("skymill: delivery consumer group mismatch") }
+	if err := s.provider.Nack(ctx,d); err != nil { return err }
+	s.metric(ctx, "delivery.nacked", 1, map[string]string{"consumer_group":s.group})
+	messageID:=""
+	if d.Message!=nil { messageID=d.Message.UUID }
+	s.emitHint(ctx, Hint{Kind:HintNacked,MessageID:messageID,ProviderDeliveryID:d.ProviderDeliveryID,ConsumerGroup:d.ConsumerGroup})
+	return nil
+}
