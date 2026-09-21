@@ -23,7 +23,7 @@ func (s *Stream) SettleAndAck(ctx context.Context, id string, state WorkflowStat
 	c, err := s.GetCorrelation(ctx, id)
 	if err != nil { return SettlementResult{}, err }
 	if c.ID == "" { return SettlementResult{}, errors.New("skymill: unknown correlation") }
-	if c.StreamEntryID == "" || c.ConsumerGroup == "" { return SettlementResult{}, errors.New("skymill: correlation is not ack-capable") }
+	if c.ProviderDeliveryID == "" || c.ConsumerGroup == "" { return SettlementResult{}, errors.New("skymill: correlation is not ack-capable") }
 	if c.ConsumerGroup != s.group { return SettlementResult{}, errors.New("skymill: correlation consumer group mismatch") }
 
 	if c.State == WorkflowPending {
@@ -31,13 +31,13 @@ func (s *Stream) SettleAndAck(ctx context.Context, id string, state WorkflowStat
 		if err != nil { return SettlementResult{}, err }
 		c = updated
 	}
-	acked, err := s.provider.Ack(ctx, c.ConsumerGroup, c.StreamEntryID)
+	acked, err := s.provider.Ack(ctx, c.ConsumerGroup, c.ProviderDeliveryID)
 	if err != nil { return SettlementResult{}, err }
 	c, err = s.GetCorrelation(ctx, id)
 	if err != nil { return SettlementResult{}, err }
 	if acked {
 		s.metric(ctx, "delivery.acked", 1, map[string]string{"consumer_group": c.ConsumerGroup, "source": "workflow"})
-		s.emitHint(ctx, Hint{Kind: HintAcked, MessageID: c.MessageID, StreamEntryID: c.StreamEntryID, ConsumerGroup: c.ConsumerGroup})
+		s.emitHint(ctx, Hint{Kind: HintAcked, MessageID: c.MessageID, ProviderDeliveryID: c.ProviderDeliveryID, ConsumerGroup: c.ConsumerGroup})
 	}
 	return SettlementResult{Correlation: c, Acked: acked}, nil
 }
