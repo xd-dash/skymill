@@ -9,14 +9,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func (s *Stream) PrepareDelivery(ctx context.Context, streamEntryID string, msg *message.Message) (bool, error) {
+func (s *Stream) PrepareDelivery(ctx context.Context, providerDeliveryID string, msg *message.Message) (bool, error) {
 	if err := s.authorize(ctx, ActionInspect); err != nil { return false, err }
 	if msg == nil { return false, errors.New("skymill: nil delivery") }
 	if s.policy.Retry.MaxDeliveries == 0 { return true, nil }
-	state, err := s.DeliveryState(ctx, streamEntryID)
+	state, err := s.DeliveryState(ctx, providerDeliveryID)
 	if err != nil { return false, err }
-	s.metric(ctx, "delivery.attempt", float64(state.Deliveries), map[string]string{"consumer_group": s.group})
-	if state.Deliveries <= s.policy.Retry.MaxDeliveries { return true, nil }
+	s.metric(ctx, "delivery.attempt", float64(state.Attempt), map[string]string{"consumer_group": s.group})
+	if state.Attempt <= s.policy.Retry.MaxDeliveries { return true, nil }
 
 	values, err := s.marshaller.Marshal(s.policy.Retry.DeadLetterStream, msg)
 	if err != nil { return false, err }
@@ -31,10 +31,10 @@ func (s *Stream) PrepareDelivery(ctx context.Context, streamEntryID string, msg 
 		redis.call('SET', KEYS[1], id)
 		return id
 	`
-	key := s.binding.idempotencyKey("dlq:" + s.group + ":" + streamEntryID)
+	key := s.binding.idempotencyKey("dlq:" + s.group + ":" + providerDeliveryID)
 	if _, err := s.client.Eval(ctx, script, []string{key, s.policy.Retry.DeadLetterStream}, uuid, metadata, payload).Result(); err != nil { return false, err }
 	s.metric(ctx, "delivery.dead_lettered", 1, map[string]string{"consumer_group": s.group})
-	s.emitHint(ctx, Hint{Kind: HintDeadLettered, MessageID: msg.UUID, StreamEntryID: streamEntryID, ConsumerGroup: s.group})
+	s.emitHint(ctx, Hint{Kind: HintDeadLettered, MessageID: msg.UUID, StreamEntryID: providerDeliveryID, ConsumerGroup: s.group})
 	return false, nil
 }
 
