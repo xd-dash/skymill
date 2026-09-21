@@ -10,7 +10,7 @@ import (
  "github.com/ThreeDotsLabs/watermill-redisstream/pkg/redisstream"
  "github.com/redis/go-redis/v9"
 )
-type RedisStreamProviderConfig struct { Client redis.UniversalClient; Binding Binding; ConsumerGroup,Consumer string; MaxLen int64; NackResendSleep,BlockTime,ClaimInterval,MaxIdleTime,ConsumerTimeout time.Duration; ClaimBatchSize int64; Logger watermill.LoggerAdapter }
+type RedisStreamProviderConfig struct { Client redis.UniversalClient; Binding Binding; ConsumerGroup,Consumer string; MaxLen int64; BlockTime,ClaimInterval,MaxIdleTime time.Duration; ClaimBatchSize int64; Logger watermill.LoggerAdapter }
 type redisStreamProvider struct { client redis.UniversalClient; binding Binding; group,consumerName string; marshaller redisstream.MarshallerUnmarshaller; publisher *redisstream.Publisher; claimInterval,blockTime,maxIdle time.Duration; claimBatch int64; cancel context.CancelFunc; wg sync.WaitGroup }
 func newRedisStreamProvider(c RedisStreamProviderConfig)(*redisStreamProvider,error){
  l:=c.Logger;if l==nil{l=watermill.NopLogger{}}
