@@ -68,3 +68,17 @@ Bounded retry is configured with `RetryPolicy.MaxDeliveries` and a distinct `Dea
 ### Metrics
 
 The exporter-neutral `Metrics` interface currently records publish acceptance/duplicates, ACK/NACK, dead-letter transitions, workflow correlation, and workflow settlement. `Pending()` exposes consumer-group pending count/range/consumer count for reconciliation and scraping.
+
+
+## Generalization pass
+
+The service no longer tries to compare count-based `MaxLen` with time-based idempotency TTL. `RetentionMode` makes the guarantee explicit:
+
+- `operational`: count trimming and TTL are independent operational bounds; Fatline observes/SLOs the relationship.
+- `replay-safe`: Skymill refuses count-based `MaxLen`, so it cannot itself trim an entry while retaining an idempotency pointer to it. Fatline must ensure external Redis retention obeys the same contract.
+
+Retry authority is now Redis' PEL delivery count (`XPENDING`), not mutable Watermill metadata. This count survives process death and claiming. `PrepareDelivery(streamEntryID, message)` evaluates the configured policy from that durable state.
+
+Long-running workflow settlement no longer requires a process-local HTTP delivery token. Correlation records carry the stream entry ID and consumer group; `SettleAndAck` atomically transitions the workflow correlation to a terminal state and `XACK`s the PEL entry. It is safe to retry after an ambiguous HTTP response.
+
+`Status()` is the generic Fatline lifecycle/reconciliation surface: stream length, pending range/count, consumer count, and oldest pending idle age. The HTTP service exposes status and workflow correlation/settlement without exposing Redis credentials or accepting caller-selected bindings.
