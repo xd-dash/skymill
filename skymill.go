@@ -31,12 +31,10 @@ type Config struct {
 
 	MaxLen int64
 
-	NackResendSleep time.Duration
 	BlockTime       time.Duration
 	ClaimInterval   time.Duration
 	ClaimBatchSize  int64
 	MaxIdleTime     time.Duration
-	ConsumerTimeout time.Duration
 
 	Authorizer Authorizer
 	Hints      HintPublisher
@@ -70,9 +68,8 @@ func New(config Config) (*Stream, error) {
 	if config.Policy.Retention.MaxLen > 0 { maxLen = config.Policy.Retention.MaxLen }
 	provider, err := newRedisStreamProvider(RedisStreamProviderConfig{
 		Client:config.Client, Binding:config.Binding, ConsumerGroup:config.ConsumerGroup, Consumer:config.Consumer,
-		MaxLen:maxLen, NackResendSleep:config.NackResendSleep, BlockTime:config.BlockTime,
-		ClaimInterval:config.ClaimInterval, ClaimBatchSize:config.ClaimBatchSize, MaxIdleTime:config.MaxIdleTime,
-		ConsumerTimeout:config.ConsumerTimeout, Logger:config.Logger,
+		MaxLen:maxLen, BlockTime:config.BlockTime,
+		ClaimInterval:config.ClaimInterval, ClaimBatchSize:config.ClaimBatchSize, MaxIdleTime:config.MaxIdleTime, Logger:config.Logger,
 	})
 	if err != nil { return nil, err }
 
