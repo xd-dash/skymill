@@ -77,7 +77,7 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
 	result, err := s.Stream.PublishOnce(ctx, req.IdempotencyKey, msg)
 	if err != nil { http.Error(w, err.Error(), http.StatusServiceUnavailable); return }
 	writeJSON(w, map[string]any{
-		"message_id": req.MessageID, "stream_entry_id": result.StreamEntryID, "duplicate": result.Duplicate,
+		"message_id": req.MessageID, "provider_delivery_id": result.ProviderDeliveryID, "duplicate": result.Duplicate,
 	})
 }
 
@@ -160,10 +160,10 @@ func (s *Server) correlate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID string `json:"id"`
 		MessageID string `json:"message_id"`
-		StreamEntryID string `json:"stream_entry_id"`
+		ProviderDeliveryID string `json:"provider_delivery_id"`
 	}
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.ID == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
-	err = s.Stream.Correlate(ctx, skymill.Correlation{ID:req.ID, MessageID:req.MessageID, StreamEntryID:req.StreamEntryID, ConsumerGroup:s.Stream.ConsumerGroup()})
+	err = s.Stream.Correlate(ctx, skymill.Correlation{ID:req.ID, MessageID:req.MessageID, StreamEntryID:req.ProviderDeliveryID, ConsumerGroup:s.Stream.ConsumerGroup()})
 	if err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
 	writeJSON(w, map[string]any{"ok":true})
 }
