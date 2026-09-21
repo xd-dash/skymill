@@ -163,7 +163,7 @@ func (s *Server) correlate(w http.ResponseWriter, r *http.Request) {
 		ProviderDeliveryID string `json:"provider_delivery_id"`
 	}
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.ID == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
-	err = s.Stream.Correlate(ctx, skymill.Correlation{ID:req.ID, MessageID:req.MessageID, StreamEntryID:req.ProviderDeliveryID, ConsumerGroup:s.Stream.ConsumerGroup()})
+	err = s.Stream.Correlate(ctx, skymill.Correlation{ID:req.ID, MessageID:req.MessageID, ProviderDeliveryID:req.ProviderDeliveryID, ConsumerGroup:s.Stream.ConsumerGroup()})
 	if err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
 	writeJSON(w, map[string]any{"ok":true})
 }
