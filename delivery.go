@@ -38,6 +38,12 @@ func (s *Stream) Pending(ctx context.Context) (PendingStats, error) {
 }
 
 
+func (s *Stream) ResolveDelivery(ctx context.Context, providerDeliveryID string) (Delivery, error) {
+	if err := s.authorize(ctx, ActionConsume); err != nil { return Delivery{}, err }
+	if providerDeliveryID == "" { return Delivery{}, errors.New("skymill: provider delivery id is required") }
+	return s.provider.DeliveryState(ctx, providerDeliveryID)
+}
+
 func (s *Stream) AckDelivery(ctx context.Context, d Delivery) (bool, error) {
 	if err := s.authorize(ctx, ActionConsume); err != nil { return false, err }
 	if d.ConsumerGroup != s.group { return false, errors.New("skymill: delivery consumer group mismatch") }
