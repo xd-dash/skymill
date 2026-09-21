@@ -7,6 +7,14 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message"
 )
 
+// DeliveryState resolves a provider delivery identity from durable provider state.
+// It intentionally carries no process-local settlement token.
+func (s *Stream) DeliveryState(ctx context.Context, providerDeliveryID string) (Delivery, error) {
+	if err := s.authorize(ctx, ActionInspect); err != nil { return Delivery{}, err }
+	if providerDeliveryID == "" { return Delivery{}, errors.New("skymill: provider delivery id is required") }
+	return s.provider.DeliveryState(ctx, providerDeliveryID)
+}
+
 func (s *Stream) PrepareDelivery(ctx context.Context, providerDeliveryID string, msg *message.Message) (bool, error) {
 	if err := s.authorize(ctx, ActionInspect); err != nil { return false, err }
 	if msg == nil { return false, errors.New("skymill: nil delivery") }
