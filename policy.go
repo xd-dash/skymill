@@ -5,7 +5,20 @@ import (
 	"time"
 )
 
+type RetentionMode string
+
+const (
+	// RetentionOperational accepts that count-based stream trimming and
+	// time-based idempotency retention are independent operational bounds.
+	RetentionOperational RetentionMode = "operational"
+	// RetentionReplaySafe disables count trimming. Idempotency records therefore
+	// cannot point at entries removed by Skymill itself; external Redis retention
+	// must obey the same contract.
+	RetentionReplaySafe RetentionMode = "replay-safe"
+)
+
 type RetentionPolicy struct {
+	Mode RetentionMode
 	// IdempotencyTTL bounds source-deduplication state. Zero means retain.
 	IdempotencyTTL time.Duration
 	// MaxLen requests approximate Redis Stream trimming through Watermill.
@@ -33,6 +46,13 @@ type Policy struct {
 func (p Policy) validate(binding Binding) error {
 	if p.Retention.IdempotencyTTL < 0 || p.Workflow.CorrelationTTL < 0 {
 		return errors.New("skymill: retention durations must be non-negative")
+	}
+	if p.Retention.Mode == "" { p.Retention.Mode = RetentionOperational }
+	if p.Retention.Mode != RetentionOperational && p.Retention.Mode != RetentionReplaySafe {
+		return errors.New("skymill: unknown retention mode")
+	}
+	if p.Retention.Mode == RetentionReplaySafe && p.Retention.MaxLen > 0 {
+		return errors.New("skymill: replay-safe retention cannot use count-based MaxLen")
 	}
 	if p.Retention.MaxLen < 0 || p.Retry.MaxDeliveries < 0 {
 		return errors.New("skymill: retention/retry counts must be non-negative")
