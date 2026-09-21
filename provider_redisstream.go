@@ -11,13 +11,14 @@ import (
  "github.com/redis/go-redis/v9"
 )
 type RedisStreamProviderConfig struct { Client redis.UniversalClient; Binding Binding; ConsumerGroup,Consumer string; MaxLen int64; NackResendSleep,BlockTime,ClaimInterval,MaxIdleTime,ConsumerTimeout time.Duration; ClaimBatchSize int64; Logger watermill.LoggerAdapter }
-type redisStreamProvider struct { client redis.UniversalClient; binding Binding; group string; marshaller redisstream.Marshaller; publisher *redisstream.Publisher; claimInterval,blockTime,maxIdle time.Duration; claimBatch int64; cancel context.CancelFunc; wg sync.WaitGroup }
+type redisStreamProvider struct { client redis.UniversalClient; binding Binding; group,consumerName string; marshaller redisstream.Marshaller; publisher *redisstream.Publisher; claimInterval,blockTime,maxIdle time.Duration; claimBatch int64; cancel context.CancelFunc; wg sync.WaitGroup }
 func newRedisStreamProvider(c RedisStreamProviderConfig)(*redisStreamProvider,error){
  l:=c.Logger;if l==nil{l=watermill.NopLogger{}}
  m:=redisstream.DefaultMarshallerUnmarshaller{};ml:=map[string]int64{};if c.MaxLen>0{ml[c.Binding.Stream]=c.MaxLen}
  pub,e:=redisstream.NewPublisher(redisstream.PublisherConfig{Client:c.Client,Marshaller:m,Maxlens:ml},l);if e!=nil{return nil,e}
  claim:=c.ClaimInterval;if claim==0{claim=5*time.Second};block:=c.BlockTime;if block==0{block=100*time.Millisecond};idle:=c.MaxIdleTime;if idle==0{idle=60*time.Second};batch:=c.ClaimBatchSize;if batch==0{batch=100}
- return &redisStreamProvider{client:c.Client,binding:c.Binding,group:c.ConsumerGroup,marshaller:m,publisher:pub,claimInterval:claim,blockTime:block,maxIdle:idle,claimBatch:batch},nil
+ consumer:=c.Consumer;if consumer==""{consumer="skymill"}
+ return &redisStreamProvider{client:c.Client,binding:c.Binding,group:c.ConsumerGroup,consumerName:consumer,marshaller:m,publisher:pub,claimInterval:claim,blockTime:block,maxIdle:idle,claimBatch:batch},nil
 }
 func(p *redisStreamProvider)Publish(ctx context.Context,ms ...*message.Message)error{for _,m:=range ms{m.SetContext(ctx)};return p.publisher.Publish(p.binding.Stream,ms...)}
 func(p *redisStreamProvider)PublishOnce(ctx context.Context,key string,msg *message.Message,r RetentionPolicy)(PublishResult,error){v,e:=p.marshaller.Marshal(p.binding.Stream,msg);if e!=nil{return PublishResult{},e};u,_:=v[redisstream.UUIDHeaderKey].(string);m,_:=v["metadata"].([]byte);b,_:=v["payload"].([]byte);script:="local e=redis.call('GET',KEYS[1]); if e then return {e,'1'} end; local id=redis.call('XADD',KEYS[2],'*','_watermill_message_uuid',ARGV[1],'metadata',ARGV[2],'payload',ARGV[3]); if tonumber(ARGV[4])>0 then redis.call('SET',KEYS[1],id,'PX',ARGV[4]) else redis.call('SET',KEYS[1],id) end; return {id,'0'}";x,e:=p.client.Eval(ctx,script,[]string{p.binding.idempotencyKey(key),p.binding.Stream},u,m,b,r.IdempotencyTTL.Milliseconds()).Slice();if e!=nil{return PublishResult{},e};if len(x)!=2{return PublishResult{},errors.New("skymill: invalid publish-once result")};id,_:=x[0].(string);d,_:=x[1].(string);return PublishResult{ProviderDeliveryID:id,Duplicate:d=="1"},nil}
@@ -38,7 +39,7 @@ func(p *redisStreamProvider)consume(ctx context.Context,out chan<- Delivery){
   for _,stream:=range xs{for _,xm:=range stream.Messages{if !p.send(ctx,out,xm){return}}}
  }
 }
-func(p *redisStreamProvider)consumer()string{return "skymill"}
+func(p *redisStreamProvider)consumer()string{return p.consumerName}
 func(p *redisStreamProvider)claim(ctx context.Context,out chan<- Delivery){
  rows,e:=p.client.XPendingExt(ctx,&redis.XPendingExtArgs{Stream:p.binding.Stream,Group:p.group,Idle:p.maxIdle,Start:"-",End:"+",Count:p.claimBatch}).Result();if e!=nil{return}
  for _,row:=range rows{xms,e:=p.client.XClaim(ctx,&redis.XClaimArgs{Stream:p.binding.Stream,Group:p.group,Consumer:p.consumer(),MinIdle:p.maxIdle,Messages:[]string{row.ID}}).Result();if e!=nil{continue};for _,xm:=range xms{if !p.send(ctx,out,xm){return}}}
