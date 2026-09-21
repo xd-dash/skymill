@@ -47,7 +47,7 @@ func (s *Stream) Settle(ctx context.Context, id string, state WorkflowState, res
 	c, err := s.GetCorrelation(ctx, id)
 	if err == nil && changed {
 		s.metric(ctx, "workflow.settled", 1, map[string]string{"state": string(state)})
-		s.emitHint(ctx, Hint{Kind: HintWorkflowSettled, MessageID: c.MessageID, StreamEntryID: c.StreamEntryID, ConsumerGroup: c.ConsumerGroup, Error: detail})
+		s.emitHint(ctx, Hint{Kind: HintWorkflowSettled, MessageID: c.MessageID, ProviderDeliveryID: c.ProviderDeliveryID, ConsumerGroup: c.ConsumerGroup, Error: detail})
 	}
 	return c, err
 }
