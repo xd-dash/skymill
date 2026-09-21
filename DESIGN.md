@@ -141,3 +141,10 @@ Accordingly, the Redis adapter uses Watermill's message type, wire marshaller, a
 A NACK is defined generically as "not acknowledged; eligible for provider redelivery". On the baseline Redis adapter it leaves the entry in the PEL and reclaim performs the later delivery. This avoids requiring Redis-version-specific immediate-release commands in the generic contract.
 
 The Redis integration qualification now covers duplicate publish-once, durable PEL attempt count across XCLAIM, DLQ failure without source ACK, repeatable settle-and-ACK after the original worker disappears, and subscription delivery identity surviving consumer cancellation/reclaim.
+
+
+## Redis keyspace atomicity
+
+Redis provider keys are derived from the authority Binding and share one Redis Cluster hash tag. The physical source stream, idempotency keys, workflow correlations, and DLQ streams for a binding therefore occupy the same hash slot. This is required because publish-once and settle-and-ACK use multi-key Lua operations; using the caller's logical stream name directly would work on standalone Redis but fail with CROSSSLOT on Redis Cluster.
+
+`Binding.Stream` is consequently a logical Skymill stream name. Redis physical key layout is an adapter detail and must not leak into applications or Fatline ACL rules.
