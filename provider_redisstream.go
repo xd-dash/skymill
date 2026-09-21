@@ -14,7 +14,7 @@ type RedisStreamProviderConfig struct { Client redis.UniversalClient; Binding Bi
 type redisStreamProvider struct { client redis.UniversalClient; binding Binding; group,consumerName string; marshaller redisstream.MarshallerUnmarshaller; publisher *redisstream.Publisher; claimInterval,blockTime,maxIdle time.Duration; claimBatch int64; cancel context.CancelFunc; wg sync.WaitGroup }
 func newRedisStreamProvider(c RedisStreamProviderConfig)(*redisStreamProvider,error){
  l:=c.Logger;if l==nil{l=watermill.NopLogger{}}
- m:=redisstream.DefaultMarshallerUnmarshaller{};ml:=map[string]int64{};if c.MaxLen>0{ml[c.Binding.Stream]=c.MaxLen}
+ m:=redisstream.DefaultMarshallerUnmarshaller{};ml:=map[string]int64{};if c.MaxLen>0{ml[c.Binding.redisStreamKey()]=c.MaxLen}
  pub,e:=redisstream.NewPublisher(redisstream.PublisherConfig{Client:c.Client,Marshaller:m,Maxlens:ml},l);if e!=nil{return nil,e}
  claim:=c.ClaimInterval;if claim==0{claim=5*time.Second};block:=c.BlockTime;if block==0{block=100*time.Millisecond};idle:=c.MaxIdleTime;if idle==0{idle=60*time.Second};batch:=c.ClaimBatchSize;if batch==0{batch=100}
  consumer:=c.Consumer;if consumer==""{consumer="skymill"}
