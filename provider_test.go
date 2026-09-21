@@ -19,7 +19,7 @@ type fakeProvider struct {
 
 func(f *fakeProvider)Publish(context.Context,...*message.Message)error{return nil}
 func(f *fakeProvider)PublishOnce(context.Context,string,*message.Message,RetentionPolicy)(PublishResult,error){return PublishResult{},nil}
-func(f *fakeProvider)Subscribe(context.Context)(<-chan *message.Message,error){return make(chan *message.Message),nil}
+func(f *fakeProvider)Subscribe(context.Context)(<-chan Delivery,error){return make(chan Delivery),nil}
 func(f *fakeProvider)DeliveryState(context.Context,string)(Delivery,error){return f.delivery,nil}
 func(f *fakeProvider)DeadLetter(context.Context,Delivery,*message.Message,string)error{return f.deadLetterErr}
 func(f *fakeProvider)Ack(context.Context,string,string)(bool,error){return f.acked,nil}
