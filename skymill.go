@@ -117,7 +117,7 @@ func (s *Stream) PublishOnce(ctx context.Context, idempotencyKey string, msg *me
 	if err != nil { return PublishResult{}, err }
 	s.metric(ctx, "publish.accepted", 1, map[string]string{"duplicate": map[bool]string{true:"1",false:"0"}[pubResult.Duplicate]})
 	s.emitHint(ctx, Hint{
-		Kind: HintActivity, MessageID: msg.UUID, StreamEntryID: pubResult.ProviderDeliveryID, Duplicate: pubResult.Duplicate,
+		Kind: HintActivity, MessageID: msg.UUID, ProviderDeliveryID: pubResult.ProviderDeliveryID, Duplicate: pubResult.Duplicate,
 	})
 	return pubResult, nil
 }
