@@ -125,7 +125,7 @@ func (s *Stream) PublishOnce(ctx context.Context, idempotencyKey string, msg *me
 func (s *Stream) Binding() Binding { return s.binding }
 func (s *Stream) ConsumerGroup() string { return s.group }
 
-func (s *Stream) Subscribe(ctx context.Context) (<-chan *message.Message, error) {
+func (s *Stream) Subscribe(ctx context.Context) (<-chan Delivery, error) {
 	if err := s.authorize(ctx, ActionConsume); err != nil { return nil, err }
 	return s.provider.Subscribe(ctx)
 }
