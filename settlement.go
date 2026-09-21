@@ -12,9 +12,10 @@ type SettlementResult struct {
 
 // SettleAndAck is the durable workflow completion primitive. It does not need
 // the original Watermill Message or an HTTP delivery token: correlation stores
-// the Redis Stream entry ID and consumer group needed to settle the PEL entry.
+// the provider delivery identity and consumer group needed to settle the durable delivery.
 //
-// Settlement is idempotent and provider ACK is independently idempotent. The\n// terminal correlation remains authoritative if a repeated ACK reports no pending entry.
+// Settlement is idempotent and provider ACK is independently idempotent. The
+// terminal correlation remains authoritative if a repeated ACK reports no pending entry.
 func (s *Stream) SettleAndAck(ctx context.Context, id string, state WorkflowState, resultRef, detail string) (SettlementResult, error) {
 	if state != WorkflowSucceeded && state != WorkflowFailed {
 		return SettlementResult{}, errors.New("skymill: settlement must be succeeded or failed")
