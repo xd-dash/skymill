@@ -14,8 +14,9 @@ import (
 
 func main() {
 	addr := getenv("SKYMILL_LISTEN_ADDR", "127.0.0.1:8081")
-	redisAddr := getenv("REDIS_ADDR", "127.0.0.1:6379")
-	client := redis.NewClient(&redis.Options{Addr: redisAddr, Username: os.Getenv("REDIS_USERNAME"), Password: os.Getenv("REDIS_PASSWORD")})
+	opts, err := redisOptions()
+	if err != nil { log.Fatal(err) }
+	client := redis.NewClient(opts)
 	defer client.Close()
 	stream, err := skymill.New(skymill.Config{
 		Client: client,
