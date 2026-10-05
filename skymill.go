@@ -32,6 +32,10 @@ type Config struct {
 
 	Binding Binding
 
+	// Scope opts new bindings into the scope-first provider namespace.
+	// Empty preserves legacy deduplication keys for existing checkpoints.
+	Scope string
+
 	// ConsumerGroup enables durable competing-consumer semantics.
 	// An empty group uses the provider's fan-out mode.
 	ConsumerGroup string
@@ -51,6 +55,7 @@ type Config struct {
 }
 
 type Stream struct {
+	idempotencyPrefix string
 	binding    Binding
 	group      string
 	authorizer Authorizer
@@ -66,6 +71,15 @@ func New(config Config) (*Stream, error) {
 	}
 	if config.Binding.Stream == "" {
 		return nil, errors.New("skymill: stream name is required")
+	}
+
+	idempotencyPrefix := "skymill:idempotency:" + config.Binding.Stream + ":"
+	if config.Scope != "" {
+		var err error
+		idempotencyPrefix, err = scopedIdempotencyPrefix(config.Scope, config.Binding.Stream)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	logger := config.Logger
@@ -103,7 +117,7 @@ func New(config Config) (*Stream, error) {
 	}
 
 	return &Stream{
-		binding: config.Binding, group: config.ConsumerGroup,
+		binding: config.Binding, group: config.ConsumerGroup, idempotencyPrefix: idempotencyPrefix,
 		authorizer: config.Authorizer, client: config.Client, marshaller: marshaller,
 		publisher: pub, subscriber: sub,
 	}, nil
@@ -155,7 +169,7 @@ func (s *Stream) PublishOnce(ctx context.Context, idempotencyKey string, msg *me
 	uuid, _ := values[redisstream.UUIDHeaderKey].(string)
 	metadata, _ := values["metadata"].([]byte)
 	payload, _ := values["payload"].([]byte)
-	idempotencyRedisKey := "skymill:idempotency:" + s.binding.Stream + ":" + idempotencyKey
+	idempotencyRedisKey := s.idempotencyPrefix + idempotencyKey
 	const script = `
 		local existing = redis.call('GET', KEYS[1])
 		if existing then return {existing, '1'} end
