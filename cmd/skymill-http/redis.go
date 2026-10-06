@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+ "strings"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -34,5 +35,12 @@ func redisOptions() (*redis.Options, error) {
 	if password := os.Getenv("REDIS_PASSWORD"); password != "" {
 		opts.Password = password
 	}
+ if file := os.Getenv("REDIS_PASSWORD_FILE"); file != "" {
+  if os.Getenv("REDIS_PASSWORD") != "" { return nil, errors.New("REDIS_PASSWORD and REDIS_PASSWORD_FILE are mutually exclusive") }
+  password, err := os.ReadFile(file)
+  if err != nil { return nil, errors.New("cannot read Redis credential file") }
+  opts.Password = strings.TrimRight(string(password), "\r\n")
+ }
 	return opts, nil
 }
+
