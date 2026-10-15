@@ -14,11 +14,13 @@ import (
 
 func main() {
 	addr := getenv("SKYMILL_LISTEN_ADDR", "127.0.0.1:8081")
-	redisAddr := getenv("REDIS_ADDR", "127.0.0.1:6379")
-	client := redis.NewClient(&redis.Options{Addr: redisAddr, Username: os.Getenv("REDIS_USERNAME"), Password: os.Getenv("REDIS_PASSWORD")})
+	opts, err := redisOptions()
+	if err != nil { log.Fatal(err) }
+	client := redis.NewClient(opts)
 	defer client.Close()
 	stream, err := skymill.New(skymill.Config{
 		Client: client,
+		Scope: providerScope(),
 		Binding: skymill.Binding{Org: getenv("SKYMILL_ORG", "xd-dash"), Tenant: getenv("SKYMILL_TENANT", "probot-runtime"), Application: getenv("SKYMILL_APPLICATION", "github-webhooks"), Stream: getenv("SKYMILL_STREAM", "github.webhooks")},
 		ConsumerGroup: getenv("SKYMILL_CONSUMER_GROUP", "probot-runtime"),
 		Consumer: os.Getenv("SKYMILL_CONSUMER"),
@@ -47,4 +49,15 @@ func int64Env(k string, fallback int64) int64 {
 	var n int64
 	if _, err := fmt.Sscan(v, &n); err != nil { log.Fatalf("%s: %v", k, err) }
 	return n
+}
+
+func providerScope() string {
+	if os.Getenv("SKYMILL_SCOPED_PROVIDER") != "true" {
+		return ""
+	}
+	scope := os.Getenv("FATLINE_SCOPE")
+	if scope == "" {
+		log.Fatal("FATLINE_SCOPE is required for scoped Skymill")
+	}
+	return scope
 }
