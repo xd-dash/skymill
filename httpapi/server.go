@@ -36,9 +36,10 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) authorize(r *http.Request) (context.Context, error) {
-	if s.Authenticate == nil { return r.Context(), nil }
+	if s.Authenticate == nil { return nil, errors.New("skymill: authenticator required") }
 	ctx, err := s.Authenticate(r)
 	if err != nil { return nil, err }
+	if ctx == nil { return nil, errors.New("skymill: authenticator returned nil context") }
 	return ctx, nil
 }
 
