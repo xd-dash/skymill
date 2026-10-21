@@ -11,7 +11,7 @@ import (
  "github.com/redis/go-redis/v9"
 )
 type RedisStreamProviderConfig struct { Client redis.UniversalClient; Binding Binding; ConsumerGroup,Consumer string; MaxLen int64; BlockTime,ClaimInterval,MaxIdleTime time.Duration; ClaimBatchSize int64; Logger watermill.LoggerAdapter }
-type redisStreamProvider struct { client redis.UniversalClient; binding Binding; group,consumerName string; marshaller redisstream.MarshallerUnmarshaller; publisher *redisstream.Publisher; claimInterval,blockTime,maxIdle time.Duration; claimBatch int64; cancel context.CancelFunc; wg sync.WaitGroup }
+type redisStreamProvider struct { client redis.UniversalClient; binding Binding; group,consumerName string; marshaller redisstream.MarshallerUnmarshaller; publisher *redisstream.Publisher; claimInterval,blockTime,maxIdle time.Duration; claimBatch int64; mu sync.Mutex; closed bool; cancels map[uint64]context.CancelFunc; nextSubscription uint64; wg sync.WaitGroup }
 func newRedisStreamProvider(c RedisStreamProviderConfig)(*redisStreamProvider,error){
  l:=c.Logger;if l==nil{l=watermill.NopLogger{}}
  m:=redisstream.DefaultMarshallerUnmarshaller{};ml:=map[string]int64{};if c.MaxLen>0{ml[c.Binding.redisStreamKey()]=c.MaxLen}
@@ -25,8 +25,13 @@ func(p *redisStreamProvider)PublishOnce(ctx context.Context,key string,msg *mess
 func(p *redisStreamProvider)Subscribe(ctx context.Context)(<-chan Delivery,error){
  if p.group==""{return nil,errors.New("skymill: durable subscription requires a consumer group")}
  if e:=p.client.XGroupCreateMkStream(ctx,p.binding.redisStreamKey(),p.group,"0").Err();e!=nil&&e.Error()!="BUSYGROUP Consumer Group name already exists"{return nil,e}
- ctx,cancel:=context.WithCancel(ctx);p.cancel=cancel;out:=make(chan Delivery);p.wg.Add(1)
- go p.consume(ctx,out)
+ ctx,cancel:=context.WithCancel(ctx);out:=make(chan Delivery)
+ p.mu.Lock()
+ if p.closed {p.mu.Unlock();cancel();return nil,errors.New("skymill: provider closed")}
+ if p.cancels==nil {p.cancels=make(map[uint64]context.CancelFunc)}
+ p.nextSubscription++;id:=p.nextSubscription;p.cancels[id]=cancel;p.wg.Add(1)
+ p.mu.Unlock()
+ go func(){defer func(){p.mu.Lock();delete(p.cancels,id);p.mu.Unlock();cancel()}();p.consume(ctx,out)}()
  return out,nil
 }
 
@@ -54,7 +59,7 @@ func(p *redisStreamProvider)DeadLetter(ctx context.Context,d Delivery,msg *messa
 func(p *redisStreamProvider)Ack(ctx context.Context,g,id string)(bool,error){n,e:=p.client.XAck(ctx,p.binding.redisStreamKey(),g,id).Result();return n>0,e}
 func(p *redisStreamProvider)Nack(ctx context.Context,d Delivery)error{return nil}
 func(p *redisStreamProvider)Status(ctx context.Context)(ProviderStatus,error){var s ProviderStatus;n,e:=p.client.XLen(ctx,p.binding.redisStreamKey()).Result();if e!=nil&&e!=redis.Nil{return s,e};s.StreamLength=n;if p.group==""{return s,nil};x,e:=p.client.XPending(ctx,p.binding.redisStreamKey(),p.group).Result();if e!=nil&&e!=redis.Nil{return s,e};if x!=nil{s.Pending=PendingStats{Count:x.Count,LowestID:x.Lower,HighestID:x.Higher,Consumers:int64(len(x.Consumers))}};cs,e:=p.client.XInfoConsumers(ctx,p.binding.redisStreamKey(),p.group).Result();if e!=nil&&e!=redis.Nil{return s,e};s.Consumers=int64(len(cs));if s.Pending.Count>0{x,e:=p.client.XPendingExt(ctx,&redis.XPendingExtArgs{Stream:p.binding.redisStreamKey(),Group:p.group,Start:"-",End:"+",Count:1}).Result();if e!=nil&&e!=redis.Nil{return s,e};if len(x)>0{s.OldestPendingIdle=x[0].Idle}};return s,nil}
-func(p *redisStreamProvider)Close()error{if p.cancel!=nil{p.cancel()};p.wg.Wait();return nil}
+func(p *redisStreamProvider)Close()error{p.mu.Lock();p.closed=true;for _,cancel:=range p.cancels{cancel()};p.mu.Unlock();p.wg.Wait();return nil}
 
 func(p *redisStreamProvider)CreateCorrelation(ctx context.Context,b Binding,c Correlation,w WorkflowPolicy)(bool,error){now:=time.Now().UTC();key:=b.correlationKey(c.ID);script:="if redis.call('EXISTS',KEYS[1])==1 then return 0 end;redis.call('HSET',KEYS[1],'id',ARGV[1],'message_id',ARGV[2],'provider_delivery_id',ARGV[3],'consumer_group',ARGV[4],'state','pending','created_at',ARGV[5]);if tonumber(ARGV[6])>0 then redis.call('PEXPIRE',KEYS[1],ARGV[6]) end;return 1";n,e:=p.client.Eval(ctx,script,[]string{key},c.ID,c.MessageID,c.ProviderDeliveryID,c.ConsumerGroup,now.Format(time.RFC3339Nano),w.CorrelationTTL.Milliseconds()).Int();return n==1,e}
 func(p *redisStreamProvider)GetCorrelation(ctx context.Context,b Binding,id string)(Correlation,error){x,e:=p.client.HGetAll(ctx,b.correlationKey(id)).Result();if e!=nil{return Correlation{},e};if len(x)==0{return Correlation{},nil};c:=Correlation{ID:x["id"],MessageID:x["message_id"],ProviderDeliveryID:x["provider_delivery_id"],ConsumerGroup:x["consumer_group"],State:WorkflowState(x["state"]),ResultRef:x["result_ref"],Error:x["error"]};c.CreatedAt,_=time.Parse(time.RFC3339Nano,x["created_at"]);if t,e:=time.Parse(time.RFC3339Nano,x["settled_at"]);e==nil{c.SettledAt=&t};return c,nil}
