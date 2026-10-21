@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -54,6 +55,9 @@ func TestDeliveryCanBeAckedAfterHTTPServerRestart(t *testing.T) {
 
 	serverA.Close()
 	if err := streamA.Close(); err != nil { t.Fatal(err) }
+	before, stateErr := streamA.DeliveryState(ctx, providerID)
+	if stateErr != nil { t.Fatalf("delivery missing before restart: id=%q err=%v",providerID,stateErr) }
+	t.Logf("durable pending before restart: id=%q consumer=%q attempt=%d",before.ProviderDeliveryID,before.Consumer,before.Attempt)
 
 	streamB := newStream()
 	t.Cleanup(func() { _ = streamB.Close() })
@@ -64,7 +68,7 @@ func TestDeliveryCanBeAckedAfterHTTPServerRestart(t *testing.T) {
 	resp, err = http.Post(serverB.URL+"/v1/deliveries/ack", "application/json", bytes.NewReader(ackBody))
 	if err != nil { t.Fatal(err) }
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK { t.Fatalf("ack after restart status = %d", resp.StatusCode) }
+	if resp.StatusCode != http.StatusOK { body,_:=io.ReadAll(resp.Body); state,stateErr:=streamB.DeliveryState(ctx,providerID); t.Fatalf("ack after restart status=%d body=%q delivery=%+v lookupErr=%v",resp.StatusCode,body,state,stateErr) }
 
 	if _, err := streamB.DeliveryState(ctx, providerID); err == nil {
 		t.Fatal("delivery remains pending after ACK")
