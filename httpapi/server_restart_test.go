@@ -34,8 +34,9 @@ func TestDeliveryCanBeAckedAfterHTTPServerRestart(t *testing.T) {
 		return stream
 	}
 
+	authenticate := func(r *http.Request) (context.Context,error) {return WithGrant(r.Context(),Grant{Binding:binding,ConsumerGroup:group,Principal:"test",Actions:map[skymill.Action]bool{skymill.ActionPublish:true,skymill.ActionConsume:true,skymill.ActionInspect:true,skymill.ActionSettle:true}}),nil}
 	streamA := newStream()
-	serverA := httptest.NewServer(New(streamA, nil).Handler())
+	serverA := httptest.NewServer(New(streamA, authenticate).Handler())
 	publishBody := []byte(`{"idempotency_key":"github-delivery-1","message_id":"github-delivery-1","payload_base64":"e30="}`)
 	resp, err := http.Post(serverA.URL+"/v1/messages", "application/json", bytes.NewReader(publishBody))
 	if err != nil { t.Fatal(err) }
@@ -56,7 +57,7 @@ func TestDeliveryCanBeAckedAfterHTTPServerRestart(t *testing.T) {
 
 	streamB := newStream()
 	t.Cleanup(func() { _ = streamB.Close() })
-	serverB := httptest.NewServer(New(streamB, nil).Handler())
+	serverB := httptest.NewServer(New(streamB, authenticate).Handler())
 	t.Cleanup(serverB.Close)
 
 	ackBody, _ := json.Marshal(map[string]string{"provider_delivery_id": providerID})
