@@ -118,7 +118,8 @@ func (s *Server) finish(w http.ResponseWriter, r *http.Request, ack bool) {
 	ctx, err := s.authorize(r)
 	if err != nil { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
 	r = r.WithContext(ctx)
-	if err := requireGrant(r, skymill.ActionConsume, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
+	if err := requireGrant(r, skymill.ActionSettle, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
+	if err := requireGrant(r, skymill.ActionInspect, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
 	var req struct { ProviderDeliveryID string `json:"provider_delivery_id"` }
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.ProviderDeliveryID == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
 	delivery, err := s.Stream.DeliveryState(ctx, req.ProviderDeliveryID)
