@@ -17,7 +17,6 @@ type Server struct {
 	Stream       *skymill.Stream
 	Authenticate Authenticator
 
-	sub <-chan skymill.Delivery
 }
 
 func New(stream *skymill.Stream, authenticate Authenticator) *Server {
@@ -41,14 +40,6 @@ func (s *Server) authorize(r *http.Request) (context.Context, error) {
 	ctx, err := s.Authenticate(r)
 	if err != nil { return nil, err }
 	return ctx, nil
-}
-
-func (s *Server) ensureSubscriber(ctx context.Context) error {
-	if s.sub != nil { return nil }
-	sub, err := s.Stream.Subscribe(context.Background())
-	if err != nil { return err }
-	s.sub = sub
-	return nil
 }
 
 func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
@@ -86,15 +77,16 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	if req.Limit <= 0 { req.Limit = 25 }
 	if req.Limit > 100 { req.Limit = 100 }
-	if err := s.ensureSubscriber(ctx); err != nil { http.Error(w, err.Error(), http.StatusServiceUnavailable); return }
+	sub, err := s.Stream.Subscribe(ctx)
+	if err != nil { http.Error(w, err.Error(), http.StatusServiceUnavailable); return }
 
 	out := make([]map[string]any, 0, req.Limit)
 	for len(out) < req.Limit {
 		var delivery skymill.Delivery
 		if len(out) == 0 {
-			select { case delivery = <-s.sub: case <-ctx.Done(): writeJSON(w, map[string]any{"deliveries": out}); return }
+			select { case delivery = <-sub: case <-ctx.Done(): writeJSON(w, map[string]any{"deliveries": out}); return }
 		} else {
-			select { case delivery = <-s.sub: default: writeJSON(w, map[string]any{"deliveries": out}); return }
+			select { case delivery = <-sub: default: writeJSON(w, map[string]any{"deliveries": out}); return }
 		}
 		msg := delivery.Message
 		if msg == nil { break }
