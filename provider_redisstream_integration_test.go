@@ -95,3 +95,43 @@ func TestRedisSubscriptionCarriesIdentityAcrossCrashReclaim(t *testing.T){
 	select{case reclaimed=<-ch2:case<-time.After(2*time.Second):t.Fatal("reclaim timeout")}
 	if reclaimed.ProviderDeliveryID!=first.ProviderDeliveryID||reclaimed.Consumer!="c2"||reclaimed.Attempt<=first.Attempt{t.Fatalf("first=%#v reclaimed=%#v",first,reclaimed)}
 }
+
+func TestRedisConcurrentSubscriptionsCloseAll(t *testing.T) {
+    c:=integrationRedis(t)
+    p:=integrationProvider(t,c,"concurrent")
+    ctx:=context.Background()
+    const subscribers=3
+    channels:=make([]<-chan Delivery,0,subscribers)
+    for i:=0;i<subscribers;i++ {
+        ch,err:=p.Subscribe(ctx)
+        if err!=nil {t.Fatal(err)}
+        channels=append(channels,ch)
+    }
+    done:=make(chan error,1)
+    go func(){done<-p.Close()}()
+    select {
+    case err:=<-done:if err!=nil {t.Fatal(err)}
+    case <-time.After(3*time.Second):t.Fatal("provider Close blocked with concurrent subscribers")
+    }
+    for i,ch:=range channels {
+        select {
+        case _,ok:=<-ch:if ok {t.Fatalf("subscription %d still open",i)}
+        case <-time.After(time.Second):t.Fatalf("subscription %d not cancelled",i)
+        }
+    }
+    if _,err:=p.Subscribe(ctx);err==nil {t.Fatal("subscription accepted after Close")}
+}
+
+func TestRedisRequestCancellationClosesSubscription(t *testing.T) {
+    c:=integrationRedis(t)
+    p:=integrationProvider(t,c,"cancelled")
+    defer p.Close()
+    ctx,cancel:=context.WithCancel(context.Background())
+    ch,err:=p.Subscribe(ctx)
+    if err!=nil {t.Fatal(err)}
+    cancel()
+    select {
+    case _,ok:=<-ch:if ok {t.Fatal("unexpected delivery after cancellation")}
+    case <-time.After(3*time.Second):t.Fatal("subscription ignored cancellation")
+    }
+}
