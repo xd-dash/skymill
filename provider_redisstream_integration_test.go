@@ -14,6 +14,7 @@ func integrationRedis(t *testing.T) *redis.Client {
 	t.Helper()
 	addr:=os.Getenv("SKYMILL_TEST_REDIS_ADDR")
 	if addr=="" { t.Skip("SKYMILL_TEST_REDIS_ADDR not set") }
+	if os.Getenv("SKYMILL_TEST_REDIS_DESTRUCTIVE")!="YES" {t.Fatal("Redis tests require explicit SKYMILL_TEST_REDIS_DESTRUCTIVE=YES for isolated database flush")}
 	c:=redis.NewClient(&redis.Options{Addr:addr})
 	t.Cleanup(func(){ _=c.Close() })
 	if err:=c.FlushDB(context.Background()).Err();err!=nil{t.Fatal(err)}
