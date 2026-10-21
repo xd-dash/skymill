@@ -15,7 +15,7 @@
             src = self;
             subPackages = [ "cmd/skymill-http" ];
             # Fail closed until a Nix build establishes the dependency vendor hash.
-            vendorHash = null;
+            vendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
           };
           providerImage = pkgs.dockerTools.buildLayeredImage {
             name = "skymill-provider";
