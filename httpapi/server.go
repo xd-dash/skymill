@@ -113,12 +113,15 @@ func (s *Server) finish(w http.ResponseWriter, r *http.Request, ack bool) {
 	r = r.WithContext(ctx)
 	if err := requireGrant(r, skymill.ActionSettle, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
 	if err := requireGrant(r, skymill.ActionInspect, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
+	if err := requireGrant(r, skymill.ActionConsume, s.Stream.Binding(), s.Stream.ConsumerGroup()); err != nil { http.Error(w, "forbidden", http.StatusForbidden); return }
 	var req struct { ProviderDeliveryID string `json:"provider_delivery_id"` }
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.ProviderDeliveryID == "" { http.Error(w, "invalid request", http.StatusBadRequest); return }
 	delivery, err := s.Stream.DeliveryState(ctx, req.ProviderDeliveryID)
 	if err != nil { http.Error(w, err.Error(), http.StatusNotFound); return }
 	if ack {
-		if _, err := s.Stream.AckDelivery(r.Context(), delivery); err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
+		acked, err := s.Stream.AckDelivery(ctx, delivery)
+		if err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
+		if !acked { http.Error(w, "delivery was not acknowledged", http.StatusConflict); return }
 	} else {
 		if err := s.Stream.NackDelivery(r.Context(), delivery); err != nil { http.Error(w, err.Error(), http.StatusConflict); return }
 	}
