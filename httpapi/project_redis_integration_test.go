@@ -5,6 +5,7 @@ import (
  "context"
  "encoding/json"
  "fmt"
+ "errors"
  "net/http"
  "net/http/httptest"
  "os"
@@ -14,6 +15,19 @@ import (
  "github.com/redis/go-redis/v9"
  "github.com/xd-dash/skymill"
 )
+
+// Authorize only the exact project-bound stream resource.
+type integrationProjectPolicy struct { project, resource string }
+func (p integrationProjectPolicy) ProjectID() string { return p.project }
+func (p integrationProjectPolicy) Authorize(action, resource string) error {
+ if resource != p.resource { return errors.New("resource denied") }
+ switch action {
+ case "publish", "consume", "inspect", "settle":
+  return nil
+ default:
+  return errors.New("action denied")
+ }
+}
 
 // Both HTTP servers share one Redis instance but have distinct stream bindings.
 func TestRedisHTTPProjectIsolation(t *testing.T) {
@@ -30,7 +44,7 @@ func TestRedisHTTPProjectIsolation(t *testing.T) {
   stream,err:=skymill.New(skymill.Config{Client:client,Binding:binding,ConsumerGroup:"workers",Consumer:name,BlockTime:10*time.Millisecond})
   if err!=nil {t.Fatal(err)}
   auth:=func(r *http.Request)(context.Context,error){
-   return ProjectGrant(r.Context(),policyFixture{project:r.Header.Get("X-Test-Project"),actions:map[string]bool{"publish":true,"consume":true,"inspect":true,"settle":true}},binding,"workers")
+   return ProjectGrant(r.Context(),integrationProjectPolicy{project:r.Header.Get("X-Test-Project"),resource:fmt.Sprintf("project/%s/skymill/%s/%s/%s/%s/%s",name,binding.Org,binding.Tenant,binding.Application,binding.Stream,"workers")},binding,"workers")
   }
   server:=httptest.NewServer(New(stream,auth).Handler())
   projects=append(projects,project{name,stream,server})
