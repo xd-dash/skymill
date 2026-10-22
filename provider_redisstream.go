@@ -5,6 +5,7 @@ import (
  "errors"
  "time"
  "sync"
+ "strings"
  "github.com/ThreeDotsLabs/watermill"
  "github.com/ThreeDotsLabs/watermill/message"
  "github.com/ThreeDotsLabs/watermill-redisstream/pkg/redisstream"
@@ -58,7 +59,7 @@ func(p *redisStreamProvider)DeliveryState(ctx context.Context,id string)(Deliver
 func(p *redisStreamProvider)DeadLetter(ctx context.Context,d Delivery,msg *message.Message,stream string)error{v,e:=p.marshaller.Marshal(p.binding.redisAuxStreamKey(stream),msg);if e!=nil{return e};u,_:=v[redisstream.UUIDHeaderKey].(string);m,_:=v["metadata"].([]byte);b,_:=v["payload"].([]byte);script:="local e=redis.call('GET',KEYS[1]);if e then return e end;local id=redis.call('XADD',KEYS[2],'*','_watermill_message_uuid',ARGV[1],'metadata',ARGV[2],'payload',ARGV[3]);redis.call('SET',KEYS[1],id);return id";_,e=p.client.Eval(ctx,script,[]string{p.binding.idempotencyKey("dlq:"+d.ConsumerGroup+":"+d.ProviderDeliveryID),p.binding.redisAuxStreamKey(stream)},u,m,b).Result();return e}
 func(p *redisStreamProvider)Ack(ctx context.Context,g,id string)(bool,error){n,e:=p.client.XAck(ctx,p.binding.redisStreamKey(),g,id).Result();return n>0,e}
 func(p *redisStreamProvider)Nack(ctx context.Context,d Delivery)error{return errors.New("skymill: Redis NACK is not implemented; delivery remains pending until reclaim")}
-func(p *redisStreamProvider)Status(ctx context.Context)(ProviderStatus,error){var s ProviderStatus;n,e:=p.client.XLen(ctx,p.binding.redisStreamKey()).Result();if e!=nil&&e!=redis.Nil{return s,e};s.StreamLength=n;if p.group==""{return s,nil};x,e:=p.client.XPending(ctx,p.binding.redisStreamKey(),p.group).Result();if e!=nil&&e!=redis.Nil{return s,e};if x!=nil{s.Pending=PendingStats{Count:x.Count,LowestID:x.Lower,HighestID:x.Higher,Consumers:int64(len(x.Consumers))}};cs,e:=p.client.XInfoConsumers(ctx,p.binding.redisStreamKey(),p.group).Result();if e!=nil&&e!=redis.Nil{return s,e};s.Consumers=int64(len(cs));if s.Pending.Count>0{x,e:=p.client.XPendingExt(ctx,&redis.XPendingExtArgs{Stream:p.binding.redisStreamKey(),Group:p.group,Start:"-",End:"+",Count:1}).Result();if e!=nil&&e!=redis.Nil{return s,e};if len(x)>0{s.OldestPendingIdle=x[0].Idle}};return s,nil}
+func(p *redisStreamProvider)Status(ctx context.Context)(ProviderStatus,error){var s ProviderStatus;n,e:=p.client.XLen(ctx,p.binding.redisStreamKey()).Result();if e!=nil&&e!=redis.Nil{return s,e};s.StreamLength=n;if p.group==""{return s,nil};x,e:=p.client.XPending(ctx,p.binding.redisStreamKey(),p.group).Result();if e!=nil&&e!=redis.Nil{if !isMissingEmptyStream(ctx,p.client,p.binding.redisStreamKey(),e){return s,e};return s,nil};if x!=nil{s.Pending=PendingStats{Count:x.Count,LowestID:x.Lower,HighestID:x.Higher,Consumers:int64(len(x.Consumers))}};cs,e:=p.client.XInfoConsumers(ctx,p.binding.redisStreamKey(),p.group).Result();if e!=nil&&e!=redis.Nil{return s,e};s.Consumers=int64(len(cs));if s.Pending.Count>0{x,e:=p.client.XPendingExt(ctx,&redis.XPendingExtArgs{Stream:p.binding.redisStreamKey(),Group:p.group,Start:"-",End:"+",Count:1}).Result();if e!=nil&&e!=redis.Nil{return s,e};if len(x)>0{s.OldestPendingIdle=x[0].Idle}};return s,nil}
 func(p *redisStreamProvider)Close()error{p.mu.Lock();p.closed=true;for _,cancel:=range p.cancels{cancel()};p.mu.Unlock();p.wg.Wait();return nil}
 
 func(p *redisStreamProvider)CreateCorrelation(ctx context.Context,b Binding,c Correlation,w WorkflowPolicy)(bool,error){now:=time.Now().UTC();key:=b.correlationKey(c.ID);script:="if redis.call('EXISTS',KEYS[1])==1 then return 0 end;redis.call('HSET',KEYS[1],'id',ARGV[1],'message_id',ARGV[2],'provider_delivery_id',ARGV[3],'consumer_group',ARGV[4],'state','pending','created_at',ARGV[5]);if tonumber(ARGV[6])>0 then redis.call('PEXPIRE',KEYS[1],ARGV[6]) end;return 1";n,e:=p.client.Eval(ctx,script,[]string{key},c.ID,c.MessageID,c.ProviderDeliveryID,c.ConsumerGroup,now.Format(time.RFC3339Nano),w.CorrelationTTL.Milliseconds()).Int();return n==1,e}
@@ -69,4 +70,12 @@ func(p *redisStreamProvider)SettleAndAck(ctx context.Context,b Binding,id string
 	key:=b.correlationKey(id);now:=time.Now().UTC()
 	script:="if redis.call('EXISTS',KEYS[1])==0 then return {-1,0} end;local current=redis.call('HGET',KEYS[1],'state');local changed=0;if current=='pending' then redis.call('HSET',KEYS[1],'state',ARGV[1],'result_ref',ARGV[2],'error',ARGV[3],'settled_at',ARGV[4]);changed=1 end;local group=redis.call('HGET',KEYS[1],'consumer_group');local delivery=redis.call('HGET',KEYS[1],'provider_delivery_id');if not group or not delivery or group=='' or delivery=='' then return {changed,-1} end;local acked=redis.call('XACK',KEYS[2],group,delivery);return {changed,acked}"
 	raw,e:=p.client.Eval(ctx,script,[]string{key,p.binding.redisStreamKey()},string(state),result,detail,now.Format(time.RFC3339Nano)).Slice();if e!=nil{return Correlation{},false,false,e};if len(raw)!=2{return Correlation{},false,false,errors.New("skymill: invalid settle-and-ack result")};changed,_:=raw[0].(int64);acked,_:=raw[1].(int64);if changed<0{return Correlation{},false,false,errors.New("skymill: unknown correlation")};if acked<0{return Correlation{},false,false,errors.New("skymill: correlation is not ack-capable")};corr,e:=p.GetCorrelation(ctx,b,id);return corr,changed==1,acked>0,e
+}
+
+ // isMissingEmptyStream distinguishes an untouched stream from a missing group
+ // on an existing stream. Status must not create Redis keys as a side effect.
+func isMissingEmptyStream(ctx context.Context, client redis.UniversalClient, key string, err error) bool {
+ if err == nil || !strings.HasPrefix(err.Error(), "NOGROUP") { return false }
+ exists, checkErr := client.Exists(ctx, key).Result()
+ return checkErr == nil && exists == 0
 }
