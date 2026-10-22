@@ -19,20 +19,16 @@
             text = ''
               set -euo pipefail
               export GOTOOLCHAIN=local
-              export GOPROXY=off
-              export GOSUMDB=off
               cd "${source}"
               go test ./...
             '';
           };
           integration = pkgs.writeShellApplication {
             name = "skymill-qualify-integration";
-            runtimeInputs = [ pkgs.go pkgs.redis pkgs.python3 pkgs.coreutils ];
+            runtimeInputs = [ pkgs.go pkgs.redis pkgs.python3 pkgs.coreutils pkgs.gnugrep ];
             text = ''
               set -euo pipefail
               export GOTOOLCHAIN=local
-              export GOPROXY=off
-              export GOSUMDB=off
               work="$(mktemp -d)"
               cleanup() {
                 if [[ -n "${redis_pid:-}" ]]; then kill "$redis_pid" 2>/dev/null || true; wait "$redis_pid" 2>/dev/null || true; fi
