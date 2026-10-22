@@ -18,6 +18,7 @@
             runtimeInputs = [ pkgs.go pkgs.git pkgs.coreutils ];
             text = ''
               set -euo pipefail
+              export CGO_ENABLED=0
               export GOTOOLCHAIN=local
               cd "${source}"
               go test ./...
@@ -28,6 +29,7 @@
             runtimeInputs = [ pkgs.go pkgs.redis pkgs.python3 pkgs.coreutils pkgs.gnugrep ];
             text = ''
               set -euo pipefail
+              export CGO_ENABLED=0
               export GOTOOLCHAIN=local
               work="$(mktemp -d)"
               cleanup() {
