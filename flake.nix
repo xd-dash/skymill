@@ -40,7 +40,7 @@
               port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
               redis-server --bind 127.0.0.1 --port "$port" --save "" --appendonly no --dir "$work" --daemonize no > "$work/redis.log" 2>&1 &
               redis_pid=$!
-              for i in $(seq 1 50); do
+              for _ in $(seq 1 50); do
                 if redis-cli -h 127.0.0.1 -p "$port" ping >/dev/null 2>&1; then break; fi
                 kill -0 "$redis_pid" || { cat "$work/redis.log" >&2; exit 1; }
                 sleep 0.1
