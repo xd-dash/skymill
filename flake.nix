@@ -31,7 +31,7 @@
               export GOTOOLCHAIN=local
               work="$(mktemp -d)"
               cleanup() {
-                if [[ -n "${redis_pid:-}" ]]; then kill "$redis_pid" 2>/dev/null || true; wait "$redis_pid" 2>/dev/null || true; fi
+                if [[ -n "''${redis_pid:-}" ]]; then kill "$redis_pid" 2>/dev/null || true; wait "$redis_pid" 2>/dev/null || true; fi
                 rm -rf "$work"
               }
               trap cleanup EXIT
