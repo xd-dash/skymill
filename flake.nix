@@ -14,7 +14,7 @@
             src = ./.;
             subPackages = [ "cmd/skymill-http" ];
             go = pkgs.go_1_26;
-            vendorHash = pkgs.lib.fakeHash;
+            vendorHash = "sha256-UUt7lGXSaQ8gGm6XbJEe86Zvy9y9s7RS6vRIYsUwXgQ=";
             proxyVendor = true;
             env.CGO_ENABLED = "0";
           };
