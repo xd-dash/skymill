@@ -11,7 +11,7 @@
           provider = pkgs.buildGoModule {
             pname = "skymill-http";
             version = "0.1.0";
-            src = self;
+            src = ./.;
             subPackages = [ "cmd/skymill-http" ];
             vendorHash = null;
             proxyVendor = true;
