@@ -13,7 +13,8 @@
             version = "0.1.0";
             src = ./.;
             subPackages = [ "cmd/skymill-http" ];
-            vendorHash = null;
+            go = pkgs.go_1_26;
+            vendorHash = pkgs.lib.fakeHash;
             proxyVendor = true;
             env.CGO_ENABLED = "0";
           };
@@ -22,7 +23,7 @@
           provider-image = pkgs.dockerTools.buildLayeredImage {
             name = "localhost/skymill-provider";
             tag = "scoped-qualification";
-            contents = [ pkgs.cacert ];
+            contents = [ provider pkgs.cacert ];
             config = {
               Entrypoint = [ "${provider}/bin/skymill-http" ];
               Env = [ "SKYMILL_LISTEN_ADDR=0.0.0.0:8081" ];
