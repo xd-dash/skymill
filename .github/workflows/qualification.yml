@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - codex/logma-hints-hardening
+      - 'v*'
 
 permissions:
   contents: read
