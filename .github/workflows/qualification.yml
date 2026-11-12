@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - codex/logma-hints-hardening
+      - codex/vm1-http-authentication
 
 permissions:
   contents: read
