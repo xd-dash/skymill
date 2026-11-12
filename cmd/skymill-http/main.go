@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"strings"
 	"net/http"
 	"os"
 	"os/signal"
@@ -48,7 +49,24 @@ func main() {
 	defer stream.Close()
 	defer client.Close()
 
-	server := &http.Server{Addr: *addr, Handler: httpapi.New(stream, nil).Handler()}
+	tokenFile := strings.TrimSpace(os.Getenv("SKYMILL_HTTP_TOKEN_FILE"))
+	if tokenFile == "" { log.Fatal("SKYMILL_HTTP_TOKEN_FILE is required") }
+	token, err := os.ReadFile(tokenFile)
+	if err != nil { log.Fatalf("read HTTP credential: %v", err) }
+	token = []byte(strings.TrimRight(string(token), "\\r\\n"))
+	authenticate, err := httpapi.NewBearerAuthenticator(token, httpapi.Grant{
+		Binding: stream.Binding(),
+		ConsumerGroup: stream.ConsumerGroup(),
+		Principal: "probot-runtime",
+		Actions: map[skymill.Action]bool{
+			skymill.ActionPublish: true,
+			skymill.ActionConsume: true,
+			skymill.ActionSettle: true,
+			skymill.ActionInspect: true,
+		},
+	})
+	if err != nil { log.Fatalf("HTTP credential: %v", err) }
+	server := &http.Server{Addr: *addr, Handler: httpapi.New(stream, authenticate).Handler()}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
